@@ -122,12 +122,12 @@ OCRで文字を読み取る
 
 | 分類 | 使用技術候補 |
 |---|---|
-| フロントエンド | HTML / CSS / JavaScript / Bootstrap |
+| フロントエンド | React + Vite |
 | バックエンド | Python / Django |
-| データベース | SQLite、PostgreSQL |
-| 認証 | Django標準認証機能 |
+| データベース | SQLite / PostgreSQL |
+| 認証 | Django標準認証機能を利用したセッション認証 |
 | OCR | Google Cloud Vision API |
-| デプロイ | Render / PythonAnywhere / 学校指定環境 |
+| デプロイ | Render + PostgreSQL |
 
 ## 技術構成の理由
 
