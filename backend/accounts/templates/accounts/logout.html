@@ -1,0 +1,17 @@
+{% extends "accounts/base.html" %}
+
+{% block title %}ログアウト{% endblock %}
+
+{% block content %}
+  <h1>ログアウト</h1>
+  <p>{{ request.user.username }} としてログインしています。</p>
+
+  <form method="post" action="{% url 'auth-logout' %}">
+    {% csrf_token %}
+    <button type="submit">ログアウトする</button>
+  </form>
+
+  <div class="links">
+    <a href="{% url 'auth-user' %}">ユーザー情報へ</a>
+  </div>
+{% endblock %}
