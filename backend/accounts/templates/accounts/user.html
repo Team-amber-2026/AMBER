@@ -1,0 +1,28 @@
+{% extends "accounts/base.html" %}
+
+{% block title %}ユーザー情報{% endblock %}
+
+{% block content %}
+  <h1>ユーザー情報</h1>
+
+  {% if user_data %}
+    <dl>
+      <dt>ID</dt>
+      <dd>{{ user_data.id }}</dd>
+      <dt>ユーザー名</dt>
+      <dd>{{ user_data.username }}</dd>
+      <dt>メール</dt>
+      <dd>{{ user_data.email }}</dd>
+    </dl>
+
+    <div class="links">
+      <a href="{% url 'auth-logout' %}">ログアウトへ</a>
+    </div>
+  {% else %}
+    <p>ログインしていません。</p>
+    <div class="links">
+      <a href="{% url 'auth-login' %}">ログインへ</a>
+      <a href="{% url 'auth-register' %}">新規登録へ</a>
+    </div>
+  {% endif %}
+{% endblock %}
