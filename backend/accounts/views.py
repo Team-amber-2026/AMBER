@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import login, logout
 from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
@@ -98,5 +99,10 @@ class LogoutView(APIView):
             return redirect("auth-login")
 
         response = Response(status=status.HTTP_204_NO_CONTENT)
-        response.delete_cookie("sessionid")
+        response.delete_cookie(
+            settings.SESSION_COOKIE_NAME,
+            path=settings.SESSION_COOKIE_PATH,
+            domain=settings.SESSION_COOKIE_DOMAIN,
+            samesite=settings.SESSION_COOKIE_SAMESITE,
+        )
         return response
