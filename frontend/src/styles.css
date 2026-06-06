@@ -25,6 +25,10 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: inherit;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.65;
@@ -60,12 +64,20 @@ p {
   margin-bottom: 18px;
 }
 
-.tabs button {
+.tabs button,
+.tabs a {
+  display: inline-grid;
+  min-height: 42px;
+  place-items: center;
+  border-radius: 6px;
   background: #e8ebe4;
   color: #20231f;
+  font-weight: 700;
+  text-decoration: none;
 }
 
-.tabs button.active {
+.tabs button.active,
+.tabs a.active {
   background: #25634d;
   color: #fff;
 }
@@ -326,6 +338,30 @@ dd {
 
 .profile-block dl {
   margin-top: 16px;
+}
+
+.placeholder-block {
+  display: grid;
+  gap: 12px;
+}
+
+.placeholder-block p {
+  margin-bottom: 0;
+  color: #697066;
+}
+
+.button-link {
+  display: inline-grid;
+  min-height: 44px;
+  width: fit-content;
+  min-width: 132px;
+  place-items: center;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: #25634d;
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
 }
 
 @media (max-width: 720px) {

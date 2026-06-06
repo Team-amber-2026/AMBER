@@ -10,7 +10,7 @@ const apiClient = axios.create({
   },
 });
 
-function getCookie(name) {
+function getCookie(name: string) {
   return document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`))
@@ -20,7 +20,7 @@ function getCookie(name) {
 apiClient.interceptors.request.use((config) => {
   const csrfToken = getCookie("csrftoken");
   if (csrfToken) {
-    config.headers["X-CSRFToken"] = decodeURIComponent(csrfToken);
+    config.headers.set("X-CSRFToken", decodeURIComponent(csrfToken));
   }
   return config;
 });
