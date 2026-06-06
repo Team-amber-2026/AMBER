@@ -1,0 +1,30 @@
+{% extends "accounts/base.html" %}
+
+{% block title %}ログイン{% endblock %}
+
+{% block content %}
+  <h1>ログイン</h1>
+
+  {% if errors %}
+    <div class="error">
+      {% for field, messages in errors.items %}
+        <div>{{ field }}: {{ messages|join:", " }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="{% url 'auth-login' %}">
+    {% csrf_token %}
+    <label for="username">ユーザー名またはメールアドレス</label>
+    <input id="username" name="username" value="{{ values.username|default:'' }}" required>
+
+    <label for="password">パスワード</label>
+    <input id="password" name="password" type="password" required>
+
+    <button type="submit">ログインする</button>
+  </form>
+
+  <div class="links">
+    <a href="{% url 'auth-register' %}">新規登録へ</a>
+  </div>
+{% endblock %}
