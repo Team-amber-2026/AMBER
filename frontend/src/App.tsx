@@ -6,6 +6,7 @@ import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./api/aut
 import AuthPage from "./pages/AuthPage";
 import ComingSoonPage from "./pages/ComingSoonPage";
 import HomePage from "./pages/HomePage";
+import ReceiptUploadPage from "./pages/ReceiptUploadPage";
 import type { AuthMode, LoginForm, RegisterForm, User } from "./types";
 import { readableError, readableErrorStatus } from "./utils/errors";
 import styles from "./App.module.css";
@@ -162,9 +163,7 @@ export default function App() {
         path="/receipts/new"
         element={
           <ProtectedRoute user={user}>
-            <ComingSoonPage
-              title="レシート登録"
-              description="次の実装で、ここに画像アップロードとOCR解析への導線を追加します。"
+            <ReceiptUploadPage
               onLogout={handleLogout}
               isSubmitting={isSubmitting}
             />

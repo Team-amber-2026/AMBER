@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import path
 
 from accounts.views import CurrentUserView, LoginView, LogoutView, RegisterView
+from receipts.views import ReceiptAnalyzeView
 
 
 urlpatterns = [
@@ -10,4 +11,5 @@ urlpatterns = [
     path("api/auth/register/", RegisterView.as_view(), name="auth-register"),
     path("api/auth/login/", LoginView.as_view(), name="auth-login"),
     path("api/auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("api/receipts/analyze/", ReceiptAnalyzeView.as_view(), name="receipt-analyze"),
 ]

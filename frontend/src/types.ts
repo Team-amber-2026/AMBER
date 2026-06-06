@@ -30,3 +30,16 @@ export type DashboardSummary = {
   receiptCount: number;
   recentExpenses: RecentExpense[];
 };
+
+export type ReceiptAnalyzeResult = {
+  shop_name: string | null;
+  purchased_at: string | null;
+  total_amount: number | null;
+  raw_ocr_text: string;
+  image?: {
+    name: string;
+    size: number;
+    content_type: string;
+  };
+  detail?: string;
+};
