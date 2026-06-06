@@ -1,0 +1,84 @@
+.shell {
+  width: min(1040px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.header h1 {
+  margin-bottom: 0;
+}
+
+.eyebrow {
+  margin-bottom: 6px;
+  color: #6d5f49;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.buttonSecondary {
+  border: 1px solid #cfd5c9;
+  background: #fff;
+  color: #20231f;
+}
+
+.buttonCompact {
+  min-width: 112px;
+  padding: 0 14px;
+}
+
+.sectionBlock {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid #d8dcd2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sectionBlock h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.sectionBlock p {
+  margin-bottom: 0;
+  color: #697066;
+}
+
+.buttonLink {
+  display: inline-grid;
+  min-height: 44px;
+  width: fit-content;
+  min-width: 132px;
+  place-items: center;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: #25634d;
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 24px, 480px);
+    padding-top: 18px;
+  }
+
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .buttonCompact {
+    width: 100%;
+  }
+}
