@@ -1,0 +1,88 @@
+.shell {
+  width: min(480px, calc(100% - 32px));
+  margin: 48px auto;
+}
+
+.panel {
+  padding: 24px;
+  border: 1px solid #d8dcd2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.tab {
+  display: inline-grid;
+  min-height: 42px;
+  place-items: center;
+  border-radius: 6px;
+  background: #e8ebe4;
+  color: #20231f;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.activeTab {
+  background: #25634d;
+  color: #fff;
+}
+
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.label {
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #b8beb1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.submitButton {
+  margin-top: 10px;
+  width: 100%;
+}
+
+.notice,
+.error {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+.notice {
+  border: 1px solid #a9ccb9;
+  background: #eef8f2;
+}
+
+.error {
+  border: 1px solid #dba1a1;
+  background: #fff3f3;
+  color: #812828;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 24px, 480px);
+    margin: 24px auto;
+  }
+
+  .panel {
+    padding: 20px;
+  }
+}

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import styles from "./ComingSoonPage.module.css";
 
 type ComingSoonPageProps = {
   title: string;
@@ -14,15 +15,15 @@ export default function ComingSoonPage({
   onLogout,
 }: ComingSoonPageProps) {
   return (
-    <main className="app-shell">
-      <header className="home-header">
+    <main className={styles.shell}>
+      <header className={styles.header}>
         <div>
-          <p className="eyebrow">ためるん</p>
+          <p className={styles.eyebrow}>ためるん</p>
           <h1>{title}</h1>
         </div>
         <button
           type="button"
-          className="secondary-button compact-button"
+          className={`${styles.buttonSecondary} ${styles.buttonCompact}`}
           onClick={onLogout}
           disabled={isSubmitting}
         >
@@ -30,10 +31,10 @@ export default function ComingSoonPage({
         </button>
       </header>
 
-      <section className="section-block placeholder-block">
+      <section className={styles.sectionBlock}>
         <h2>準備中</h2>
         <p>{description}</p>
-        <Link className="button-link" to="/home">
+        <Link className={styles.buttonLink} to="/home">
           ホームへ戻る
         </Link>
       </section>

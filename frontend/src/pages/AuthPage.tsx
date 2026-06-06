@@ -2,6 +2,7 @@ import type { Dispatch, FormEvent, SetStateAction } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import type { AuthMode, LoginForm, RegisterForm, User } from "../types";
+import styles from "./AuthPage.module.css";
 
 type AuthPageProps = {
   mode: AuthMode;
@@ -48,27 +49,36 @@ export default function AuthPage({
   }
 
   return (
-    <main className="auth-shell">
-      <section className="auth-panel">
+    <main className={styles.shell}>
+      <section className={styles.panel}>
         <h1>ためるん</h1>
 
-        {message && <p className="notice">{message}</p>}
-        {error && <p className="error">{error}</p>}
+        {message && <p className={styles.notice}>{message}</p>}
+        {error && <p className={styles.error}>{error}</p>}
 
-        <div className="tabs" role="tablist" aria-label="認証メニュー">
-          <Link className={mode === "login" ? "active" : ""} to="/login">
+        <div className={styles.tabs} role="tablist" aria-label="認証メニュー">
+          <Link
+            className={`${styles.tab} ${mode === "login" ? styles.activeTab : ""}`}
+            to="/login"
+          >
             ログイン
           </Link>
-          <Link className={mode === "register" ? "active" : ""} to="/register">
+          <Link
+            className={`${styles.tab} ${mode === "register" ? styles.activeTab : ""}`}
+            to="/register"
+          >
             新規登録
           </Link>
         </div>
 
         {mode === "login" ? (
-          <form onSubmit={handleLogin}>
-            <label htmlFor="login-username">ユーザー名またはメールアドレス</label>
+          <form className={styles.form} onSubmit={handleLogin}>
+            <label className={styles.label} htmlFor="login-username">
+              ユーザー名またはメールアドレス
+            </label>
             <input
               id="login-username"
+              className={styles.input}
               value={loginForm.username}
               onChange={(event) =>
                 setLoginForm((current) => ({ ...current, username: event.target.value }))
@@ -76,9 +86,12 @@ export default function AuthPage({
               required
             />
 
-            <label htmlFor="login-password">パスワード</label>
+            <label className={styles.label} htmlFor="login-password">
+              パスワード
+            </label>
             <input
               id="login-password"
+              className={styles.input}
               type="password"
               value={loginForm.password}
               onChange={(event) =>
@@ -87,15 +100,18 @@ export default function AuthPage({
               required
             />
 
-            <button type="submit" disabled={isSubmitting}>
+            <button className={styles.submitButton} type="submit" disabled={isSubmitting}>
               ログイン
             </button>
           </form>
         ) : (
-          <form onSubmit={handleRegister}>
-            <label htmlFor="register-username">ユーザー名</label>
+          <form className={styles.form} onSubmit={handleRegister}>
+            <label className={styles.label} htmlFor="register-username">
+              ユーザー名
+            </label>
             <input
               id="register-username"
+              className={styles.input}
               value={registerForm.username}
               onChange={(event) =>
                 setRegisterForm((current) => ({ ...current, username: event.target.value }))
@@ -103,9 +119,12 @@ export default function AuthPage({
               required
             />
 
-            <label htmlFor="register-email">メールアドレス</label>
+            <label className={styles.label} htmlFor="register-email">
+              メールアドレス
+            </label>
             <input
               id="register-email"
+              className={styles.input}
               type="email"
               value={registerForm.email}
               onChange={(event) =>
@@ -114,9 +133,12 @@ export default function AuthPage({
               required
             />
 
-            <label htmlFor="register-password">パスワード</label>
+            <label className={styles.label} htmlFor="register-password">
+              パスワード
+            </label>
             <input
               id="register-password"
+              className={styles.input}
               type="password"
               value={registerForm.password}
               onChange={(event) =>
@@ -125,7 +147,7 @@ export default function AuthPage({
               required
             />
 
-            <button type="submit" disabled={isSubmitting}>
+            <button className={styles.submitButton} type="submit" disabled={isSubmitting}>
               登録
             </button>
           </form>

@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 
 import type { DashboardSummary, User } from "../types";
 import { formatCurrency } from "../utils/format";
+import styles from "./HomePage.module.css";
 
 const dashboardSummary: DashboardSummary = {
   totalAmount: 0,
@@ -21,15 +22,15 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
   const navigate = useNavigate();
 
   return (
-    <main className="app-shell">
-      <header className="home-header">
+    <main className={styles.shell}>
+      <header className={styles.header}>
         <div>
-          <p className="eyebrow">ためるん</p>
+          <p className={styles.eyebrow}>ためるん</p>
           <h1>{user.username}さんのホーム</h1>
         </div>
         <button
           type="button"
-          className="secondary-button compact-button"
+          className={`${styles.buttonSecondary} ${styles.buttonCompact}`}
           onClick={onLogout}
           disabled={isSubmitting}
         >
@@ -37,46 +38,58 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
         </button>
       </header>
 
-      {message && <p className="notice">{message}</p>}
-      {error && <p className="error">{error}</p>}
+      {message && <p className={styles.notice}>{message}</p>}
+      {error && <p className={styles.error}>{error}</p>}
 
-      <section className="summary-panel" aria-labelledby="monthly-total-title">
+      <section className={styles.summaryPanel} aria-labelledby="monthly-total-title">
         <div>
-          <p className="eyebrow">今月の支出</p>
+          <p className={styles.eyebrow}>今月の支出</p>
           <h2 id="monthly-total-title">{formatCurrency(dashboardSummary.totalAmount)}</h2>
-          <p className="summary-note">登録された支出が月次合計に反映されます。</p>
+          <p className={styles.summaryNote}>登録された支出が月次合計に反映されます。</p>
         </div>
-        <div className="receipt-count">
+        <div className={styles.receiptCount}>
           <span>{dashboardSummary.receiptCount}</span>
           <small>件</small>
         </div>
       </section>
 
-      <section className="primary-actions" aria-label="主な操作">
-        <button type="button" className="scan-button" onClick={() => navigate("/receipts/new")}>
-          <span className="button-icon" aria-hidden="true">
+      <section className={styles.primaryActions} aria-label="主な操作">
+        <button
+          type="button"
+          className={styles.scanButton}
+          onClick={() => navigate("/receipts/new")}
+        >
+          <span className={styles.buttonIcon} aria-hidden="true">
             +
           </span>
           レシートを登録
         </button>
-        <button type="button" className="secondary-button" onClick={() => navigate("/expenses")}>
+        <button
+          type="button"
+          className={styles.buttonSecondary}
+          onClick={() => navigate("/expenses")}
+        >
           支出一覧
         </button>
       </section>
 
-      <section className="content-grid">
-        <div className="section-block">
-          <div className="section-heading">
+      <section className={styles.contentGrid}>
+        <div className={styles.sectionBlock}>
+          <div className={styles.sectionHeading}>
             <h2>最近の支出</h2>
-            <button type="button" className="text-button" onClick={() => navigate("/expenses")}>
+            <button
+              type="button"
+              className={styles.textButton}
+              onClick={() => navigate("/expenses")}
+            >
               すべて見る
             </button>
           </div>
 
           {dashboardSummary.recentExpenses.length > 0 ? (
-            <ul className="expense-list">
+            <ul className={styles.expenseList}>
               {dashboardSummary.recentExpenses.map((expense) => (
-                <li key={expense.id} className="expense-item">
+                <li key={expense.id} className={styles.expenseItem}>
                   <div>
                     <strong>{expense.shopName}</strong>
                     <span>
@@ -88,16 +101,16 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
               ))}
             </ul>
           ) : (
-            <div className="empty-state">
+            <div className={styles.emptyState}>
               <strong>まだ支出がありません</strong>
               <p>レシート登録ができるようになると、ここに直近の支出が表示されます。</p>
             </div>
           )}
         </div>
 
-        <div className="section-block profile-block">
+        <div className={`${styles.sectionBlock} ${styles.profileBlock}`}>
           <h2>アカウント</h2>
-          <dl>
+          <dl className={styles.definitionList}>
             <dt>ID</dt>
             <dd>{user.id}</dd>
             <dt>ユーザー名</dt>

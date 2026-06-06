@@ -8,6 +8,7 @@ import ComingSoonPage from "./pages/ComingSoonPage";
 import HomePage from "./pages/HomePage";
 import type { AuthMode, LoginForm, RegisterForm, User } from "./types";
 import { readableError, readableErrorStatus } from "./utils/errors";
+import styles from "./App.module.css";
 
 const initialLogin: LoginForm = {
   username: "",
@@ -103,7 +104,7 @@ export default function App() {
   }
 
   if (!authChecked) {
-    return <main className="auth-shell">読み込み中...</main>;
+    return <main className={styles.loadingShell}>読み込み中...</main>;
   }
 
   return (
