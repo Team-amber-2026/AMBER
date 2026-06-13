@@ -1,0 +1,102 @@
+.shell {
+  width: min(720px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.header h1 {
+  margin-bottom: 0;
+}
+
+.eyebrow {
+  margin-bottom: 6px;
+  color: #6d5f49;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.buttonSecondary {
+  border: 1px solid #cfd5c9;
+  background: #fff;
+  color: #20231f;
+}
+
+.completePanel {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  padding: 28px;
+  border: 1px solid #d8dcd2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.checkMark {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #25634d;
+  color: #fff;
+  font-size: 42px;
+  font-weight: 800;
+}
+
+.summaryList {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+
+.summaryList dt {
+  font-weight: 700;
+}
+
+.summaryList dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.actionRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.actionRow button {
+  min-height: 54px;
+  font-weight: 800;
+}
+
+.primaryButton {
+  background: #d65f3f;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 24px, 480px);
+    padding-top: 18px;
+  }
+
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actionRow {
+    grid-template-columns: 1fr;
+  }
+}

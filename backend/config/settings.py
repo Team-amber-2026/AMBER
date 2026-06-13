@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "accounts",
     "receipts",
+    "expenses",
 ]
 
 MIDDLEWARE = [
