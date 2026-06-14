@@ -18,7 +18,7 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: amber-postgres
+          name: amber-postgres-sg
           property: connectionString
       - key: ALLOWED_HOSTS
         value: ".onrender.com"
@@ -38,9 +38,10 @@ services:
         value: "True"
 
 databases:
-  - name: amber-postgres
+  - name: amber-postgres-sg
     databaseName: amber
     user: amber
+    region: singapore
     plan: free
     postgresMajorVersion: "16"
     ipAllowList: []
