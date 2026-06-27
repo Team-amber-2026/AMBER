@@ -251,7 +251,7 @@ OCRで文字を読み取る
 
 | 要件ID | 要件 | 内容 |
 |---|---|---|
-| NF-OPS-01 | デプロイ | Render上でフロントエンド、バックエンド、DBを公開する |
+| NF-OPS-01 | デプロイ | Vercel上でフロントエンド、Render上でバックエンドとDBを公開する |
 | NF-OPS-02 | 環境変数管理 | `.env` やRenderのEnvironment Variablesで設定値を管理する |
 | NF-OPS-03 | エラー表示 | OCR失敗、通信失敗、保存失敗時にユーザーへ通知する |
 | NF-OPS-04 | サンプルデータ | 発表時は個人情報を含まないサンプルレシートを使用する |
@@ -357,7 +357,7 @@ GET /api/summary/monthly/?year=2026&month=5
 | 認証 | Django標準認証機能を利用したセッション認証 |
 | OCR | Google Cloud Vision API |
 | 画像保存 | Cloudinary |
-| デプロイ | Render Static Site / Render Web Service / Render PostgreSQL |
+| デプロイ | Vercel / Render Web Service / Render PostgreSQL |
 
 ---
 
@@ -369,7 +369,7 @@ GET /api/summary/monthly/?year=2026&month=5
 ユーザーのスマホ / PC
  ↓
 React + Vite
-Render Static Site
+Vercel
  ↓
 Django API
 Render Web Service
@@ -391,6 +391,7 @@ OCR処理
 | SECRET_KEY | Djangoのシークレットキー |
 | DEBUG | 開発環境ではTrue、本番環境ではFalse |
 | DATABASE_URL | DB接続情報 |
+| VITE_API_BASE_URL | フロントエンドから呼び出すDjango APIのベースURL |
 | GOOGLE_APPLICATION_CREDENTIALS | Google Cloud Vision API認証情報 |
 | CORS_ALLOWED_ORIGINS | フロントエンドのURL |
 | CSRF_TRUSTED_ORIGINS | CSRFを許可するURL |
@@ -509,7 +510,7 @@ OCR処理
 - 支出一覧を表示できる
 - 今月の支出合計を表示できる
 - カテゴリー別集計を表示できる
-- Render上にデプロイし、スマホ実機からアクセスできる
+- Vercel / Render上にデプロイし、スマホ実機からアクセスできる
 
 ---
 
