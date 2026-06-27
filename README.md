@@ -124,7 +124,7 @@ OCRで文字を読み取る
 | データベース | SQLite / PostgreSQL |
 | 認証 | Django標準認証機能を利用したセッション認証 |
 | OCR | Google Cloud Vision API |
-| デプロイ | Render + PostgreSQL |
+| デプロイ | Vercel（フロントエンド） / Render Web Service（バックエンド） / Render PostgreSQL |
 
 ## 技術構成の理由
 
@@ -220,18 +220,66 @@ pip install -r requirements.txt
 pip freeze > requirements.txt
 ```
 
-### 4. 環境変数ファイルを作成
+### 4. 環境変数を設定
 
-プロジェクト直下に `.env` ファイルを作成します。
+プロジェクト直下の `.env.example` と `frontend/.env.example` を参考に、ローカルでは必要な環境変数を設定します。
+このリポジトリでは `.env` を自動読み込みしないため、ローカルで使う場合はシェル、IDE、または起動ツール側で読み込ませます。
 
 ```env
 SECRET_KEY=your-secret-key
 DEBUG=True
-DATABASE_URL=sqlite:///db.sqlite3
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 GOOGLE_APPLICATION_CREDENTIALS=path/to/google-credentials.json
 ```
 
 注意：`.env` やGoogle Cloudの認証情報ファイルはGitHubにアップロードしないでください。
+
+## デプロイ設定
+
+### フロントエンド: Vercel
+
+Vercel では `frontend` ディレクトリをプロジェクトルートとして設定します。
+
+| 項目 | 値 |
+|---|---|
+| Framework Preset | Vite |
+| Build Command | `npm run build` |
+| Output Directory | `dist` |
+| Environment Variables | `VITE_API_BASE_URL=https://<Render Web Service URL>/api` |
+
+`frontend/vercel.json` は SPA の直接URLアクセスに対応するため、すべてのパスを `index.html` に rewrite します。
+Vercel の環境変数には `VITE_` で始まる名前を使うと、Vite のクライアントコードから参照できます。
+
+### バックエンド: Render Web Service
+
+Render では `render.yaml` を使って Django API と Render PostgreSQL を定義します。
+実際の秘密情報や本番URLは Render Dashboard の Environment Variables で管理し、GitHub にはコミットしません。
+
+| 環境変数 | 内容 |
+|---|---|
+| `SECRET_KEY` | Renderで生成、またはDashboardで設定 |
+| `DEBUG` | 本番では `False` |
+| `DATABASE_URL` | Render PostgreSQL の接続文字列 |
+| `ALLOWED_HOSTS` | `.onrender.com` または利用するバックエンドドメイン |
+| `FRONTEND_ORIGIN` | Vercel のフロントエンドURL |
+| `CORS_ALLOWED_ORIGINS` | Vercel のフロントエンドURL |
+| `CSRF_TRUSTED_ORIGINS` | Vercel のフロントエンドURL |
+| `SESSION_COOKIE_SAMESITE` | 本番では `None` |
+| `CSRF_COOKIE_SAMESITE` | 本番では `None` |
+| `SESSION_COOKIE_SECURE` | 本番では `True` |
+| `CSRF_COOKIE_SECURE` | 本番では `True` |
+
+Render Web Service と Render PostgreSQL が同じ workspace かつ同じ region にある場合は、PostgreSQL の internal connection string を使います。
+別 region や別 workspace の internal connection string は名前解決できないため、同じ region にそろえるか、必要に応じて external connection string を使います。
+
+### Render PostgreSQL 接続確認
+
+- Web Service と PostgreSQL が同じ Render workspace にあること
+- Web Service と PostgreSQL が同じ region にあること
+- `DATABASE_URL` が古いDBや別regionの internal URL を指していないこと
+- Blueprintを使う場合は `render.yaml` の `fromDatabase` から `DATABASE_URL` を設定していること
+- Dashboardで手動設定する場合は、接続文字列を再コピーして保存後に再デプロイすること
 
 ### 5. マイグレーションを実行
 
