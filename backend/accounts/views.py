@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import login, logout
+from django.middleware.csrf import get_token
 from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -13,6 +14,14 @@ from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 
 def wants_html(request):
     return "text/html" in request.META.get("HTTP_ACCEPT", "")
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CsrfTokenView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({"csrfToken": get_token(request)})
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
