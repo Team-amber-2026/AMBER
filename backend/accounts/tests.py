@@ -13,9 +13,17 @@ class AuthApiTests(APITestCase):
         self.client = APIClient(enforce_csrf_checks=True)
 
     def _csrf_token(self):
-        response = self.client.get(reverse("auth-user"))
-        self.assertEqual(response.status_code, 403)
-        return response.cookies["csrftoken"].value
+        response = self.client.get(reverse("auth-csrf"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("csrfToken", response.data)
+        return response.data["csrfToken"]
+
+    def test_csrf_endpoint_returns_token_and_sets_cookie(self):
+        response = self.client.get(reverse("auth-csrf"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("csrfToken", response.data)
+        self.assertIn("csrftoken", response.cookies)
 
     def test_user_endpoint_sets_csrf_cookie_when_anonymous(self):
         response = self.client.get(reverse("auth-user"))
