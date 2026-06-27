@@ -59,3 +59,17 @@ export type SavedExpense = ExpenseSavePayload & {
   created_at: string;
   updated_at: string;
 };
+
+export type ExpenseListItem = SavedExpense;
+
+export type MonthlyCategorySummary = {
+  category: string;
+  total: number;
+};
+
+export type MonthlySummaryResponse = {
+  year: number;
+  month: number;
+  grand_total: number;
+  categories: MonthlyCategorySummary[];
+};
