@@ -6,6 +6,7 @@ import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./api/aut
 import AuthPage from "./pages/AuthPage";
 import ComingSoonPage from "./pages/ComingSoonPage";
 import HomePage from "./pages/HomePage";
+import ReceiptCompletePage from "./pages/ReceiptCompletePage";
 import ReceiptUploadPage from "./pages/ReceiptUploadPage";
 import type { AuthMode, LoginForm, RegisterForm, User } from "./types";
 import { readableError, readableErrorStatus } from "./utils/errors";
@@ -180,6 +181,14 @@ export default function App() {
               onLogout={handleLogout}
               isSubmitting={isSubmitting}
             />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/receipts/complete"
+        element={
+          <ProtectedRoute user={user}>
+            <ReceiptCompletePage onLogout={handleLogout} isSubmitting={isSubmitting} />
           </ProtectedRoute>
         }
       />

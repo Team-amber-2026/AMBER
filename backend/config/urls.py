@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.urls import path
 
 from accounts.views import CsrfTokenView, CurrentUserView, LoginView, LogoutView, RegisterView
+from expenses.views import ExpenseListCreateView
 from receipts.views import ReceiptAnalyzeView
 
 
@@ -19,4 +20,5 @@ urlpatterns = [
     path("api/auth/login/", LoginView.as_view(), name="auth-login"),
     path("api/auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("api/receipts/analyze/", ReceiptAnalyzeView.as_view(), name="receipt-analyze"),
+    path("api/expenses/", ExpenseListCreateView.as_view(), name="expense-list"),
 ]

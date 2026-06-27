@@ -2,12 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { saveExpense } from "../api/expenses";
 import { analyzeReceiptImage } from "../api/receipts";
-import type { ReceiptAnalyzeResult } from "../types";
+import type { ExpenseSavePayload, ReceiptAnalyzeResult } from "../types";
 import { readableError } from "../utils/errors";
 import styles from "./ReceiptUploadPage.module.css";
 
 const maxImageSize = 10 * 1024 * 1024;
+const categories = ["食費", "日用品", "交通費", "医療費", "娯楽", "その他"];
+const initialConfirmForm: ExpenseSavePayload = {
+  shop_name: "",
+  purchased_at: "",
+  total_amount: 0,
+  category: "その他",
+  raw_ocr_text: "",
+};
 
 type ReceiptUploadPageProps = {
   onLogout: () => Promise<void>;
@@ -23,6 +32,8 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [confirmForm, setConfirmForm] = useState<ExpenseSavePayload>(initialConfirmForm);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -76,6 +87,13 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
     try {
       const analyzedResult = await analyzeReceiptImage(selectedFile);
       setResult(analyzedResult);
+      setConfirmForm({
+        shop_name: analyzedResult.shop_name ?? "",
+        purchased_at: analyzedResult.purchased_at ?? "",
+        total_amount: analyzedResult.total_amount ?? 0,
+        category: "その他",
+        raw_ocr_text: analyzedResult.raw_ocr_text,
+      });
       setMessage(analyzedResult.detail ?? "画像をアップロードしました。");
     } catch (requestError) {
       setError(readableError(requestError));
@@ -84,9 +102,31 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
     }
   }
 
+  async function handleSave() {
+    const validationError = validateConfirmForm(confirmForm);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const savedExpense = await saveExpense(confirmForm);
+      navigate("/receipts/complete", { state: { expense: savedExpense } });
+    } catch (requestError) {
+      setError(readableError(requestError));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function clearSelection() {
     setSelectedFile(null);
     setResult(null);
+    setConfirmForm(initialConfirmForm);
     setMessage("");
     setError("");
     if (fileInputRef.current) {
@@ -95,6 +135,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
   }
 
   const hasSelection = selectedFile !== null;
+  const isBusy = isSubmitting || isAnalyzing || isSaving;
 
   return (
     <main className={styles.shell}>
@@ -111,7 +152,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
             type="button"
             className={styles.buttonSecondary}
             onClick={onLogout}
-            disabled={isSubmitting || isAnalyzing}
+            disabled={isBusy}
           >
             ログアウト
           </button>
@@ -154,7 +195,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
           type="button"
           className={styles.primaryButton}
           onClick={handleAnalyze}
-          disabled={!hasSelection || isAnalyzing}
+          disabled={!hasSelection || isAnalyzing || isSaving}
         >
           {isAnalyzing ? "解析中..." : "OCR解析へ進む"}
         </button>
@@ -162,7 +203,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
           type="button"
           className={styles.buttonSecondary}
           onClick={clearSelection}
-          disabled={!hasSelection || isAnalyzing}
+          disabled={!hasSelection || isBusy}
         >
           選択を解除
         </button>
@@ -177,19 +218,110 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
 
       {result && (
         <section className={styles.resultPanel} aria-labelledby="receipt-result-title">
-          <h2 id="receipt-result-title">解析結果</h2>
-          <dl className={styles.resultList}>
-            <dt>店名</dt>
-            <dd>{result.shop_name ?? "未取得"}</dd>
-            <dt>購入日</dt>
-            <dd>{result.purchased_at ?? "未取得"}</dd>
-            <dt>合計金額</dt>
-            <dd>{result.total_amount ?? "未取得"}</dd>
-            <dt>ファイル</dt>
-            <dd>{result.image?.name ?? selectedFile?.name ?? "-"}</dd>
-          </dl>
+          <div className={styles.resultHeading}>
+            <div>
+              <p className={styles.eyebrow}>確認・修正</p>
+              <h2 id="receipt-result-title">支出として保存</h2>
+            </div>
+            <span>{result.image?.name ?? selectedFile?.name ?? "-"}</span>
+          </div>
+
+          <div className={styles.formGrid}>
+            <label>
+              店名
+              <input
+                type="text"
+                value={confirmForm.shop_name}
+                onChange={(event) =>
+                  setConfirmForm((current) => ({ ...current, shop_name: event.target.value }))
+                }
+                placeholder="店名を入力"
+              />
+            </label>
+
+            <label>
+              購入日
+              <input
+                type="date"
+                value={confirmForm.purchased_at}
+                onChange={(event) =>
+                  setConfirmForm((current) => ({ ...current, purchased_at: event.target.value }))
+                }
+              />
+            </label>
+
+            <label>
+              合計金額
+              <input
+                type="number"
+                min="1"
+                inputMode="numeric"
+                value={confirmForm.total_amount || ""}
+                onChange={(event) =>
+                  setConfirmForm((current) => ({
+                    ...current,
+                    total_amount: Number(event.target.value),
+                  }))
+                }
+                placeholder="0"
+              />
+            </label>
+
+            <label>
+              カテゴリー
+              <select
+                value={confirmForm.category}
+                onChange={(event) =>
+                  setConfirmForm((current) => ({ ...current, category: event.target.value }))
+                }
+              >
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className={styles.fullWidth}>
+              OCR全文
+              <textarea
+                value={confirmForm.raw_ocr_text}
+                onChange={(event) =>
+                  setConfirmForm((current) => ({ ...current, raw_ocr_text: event.target.value }))
+                }
+                rows={5}
+                placeholder="OCRで読み取った全文"
+              />
+            </label>
+          </div>
+
+          <button
+            type="button"
+            className={styles.saveButton}
+            onClick={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? "保存中..." : "支出として保存"}
+          </button>
         </section>
       )}
     </main>
   );
+}
+
+function validateConfirmForm(form: ExpenseSavePayload) {
+  if (!form.purchased_at) {
+    return "購入日を入力してください。";
+  }
+
+  if (!Number.isInteger(form.total_amount) || form.total_amount <= 0) {
+    return "合計金額は1円以上の半角数字で入力してください。";
+  }
+
+  if (!form.category.trim()) {
+    return "カテゴリーを選択してください。";
+  }
+
+  return "";
 }
