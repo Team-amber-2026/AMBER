@@ -1,4 +1,5 @@
 from django.db import migrations
+from django.core.management.color import no_style
 
 
 def reconcile_legacy_history_table(apps, schema_editor):
@@ -23,7 +24,10 @@ def reconcile_legacy_history_table(apps, schema_editor):
         if legacy_table in tables:
             raise RuntimeError(f"Legacy table already exists: {legacy_table}")
 
-        cursor.execute(f"ALTER TABLE {quote(table)} RENAME TO {quote(legacy_table)}")
+        cursor.execute(
+            f"CREATE TABLE {quote(legacy_table)} AS SELECT * FROM {quote(table)}"
+        )
+        cursor.execute(f"DROP TABLE {quote(table)}")
 
     schema_editor.create_model(history_model)
 
@@ -49,6 +53,9 @@ def reconcile_legacy_history_table(apps, schema_editor):
               )
             """
         )
+
+    for statement in connection.ops.sequence_reset_sql(no_style(), [history_model]):
+        schema_editor.execute(statement)
 
 
 class Migration(migrations.Migration):
