@@ -1,5 +1,6 @@
-from pathlib import Path
 import os
+from pathlib import Path
+from urllib.parse import urlparse
 
 import dj_database_url
 
@@ -16,6 +17,22 @@ def env_list(name, default):
     return [value.strip() for value in os.environ.get(name, default).split(",") if value.strip()]
 
 
+def build_vercel_csrf_origins(frontend_origin, preview_origins=None):
+    parsed = urlparse(frontend_origin)
+    if parsed.scheme != "https":
+        return []
+
+    host = parsed.hostname or ""
+    if not host.endswith(".vercel.app"):
+        return []
+
+    origins = [frontend_origin]
+    if preview_origins:
+        origins.extend(preview_origins)
+
+    return origins
+
+
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 INSTALLED_APPS = [
@@ -27,7 +44,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
-    "cloudinary",
     "accounts",
     "receipts",
     "expenses",
@@ -105,19 +121,29 @@ REST_FRAMEWORK = {
     ],
 }
 
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
-DEFAULT_FRONTEND_ORIGINS = f"{FRONTEND_ORIGIN},http://127.0.0.1:3000"
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "https://amber-lilac.vercel.app")
+FRONTEND_PREVIEW_ORIGINS = env_list("FRONTEND_PREVIEW_ORIGINS", "")
+DEFAULT_FRONTEND_ORIGINS = [FRONTEND_ORIGIN]
+if DEBUG:
+    DEFAULT_FRONTEND_ORIGINS.extend(["http://localhost:3000", "http://127.0.0.1:3000"])
 
-CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", DEFAULT_FRONTEND_ORIGINS)
+DEFAULT_CORS_ORIGIN_REGEXES = []
+
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", ",".join(DEFAULT_FRONTEND_ORIGINS + FRONTEND_PREVIEW_ORIGINS))
+CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", ",".join(DEFAULT_CORS_ORIGIN_REGEXES))
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", DEFAULT_FRONTEND_ORIGINS)
+DEFAULT_CSRF_TRUSTED_ORIGINS = build_vercel_csrf_origins(FRONTEND_ORIGIN, FRONTEND_PREVIEW_ORIGINS)
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", ",".join(DEFAULT_CSRF_TRUSTED_ORIGINS))
+if DEBUG:
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        if origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(origin)
 CSRF_COOKIE_HTTPONLY = False
 
-SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
-CSRF_COOKIE_SAMESITE = os.environ.get("CSRF_COOKIE_SAMESITE", "Lax")
-SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
-CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+SESSION_COOKIE_SAMESITE = "Lax" if DEBUG else os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+CSRF_COOKIE_SAMESITE = "Lax" if DEBUG else os.environ.get("CSRF_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SECURE = False if DEBUG else os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
+CSRF_COOKIE_SECURE = False if DEBUG else os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")

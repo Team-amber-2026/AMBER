@@ -316,11 +316,9 @@ Django標準のUserモデルを利用する。
 | POST | `/api/auth/logout/` | ログアウト |
 | GET | `/api/auth/user/` | ログイン中のユーザー情報取得 |
 
-### 13.2 OCR API
+### 13.2 OCR処理
 
-| メソッド | エンドポイント | 内容 |
-|---|---|---|
-| POST | `/api/receipts/analyze/` | レシート画像をOCR解析する |
+レシート画像はブラウザ内でOCR解析し、画像本体をAPIへ送信・保存しない。OCRの初回解析結果と確認・修正後の支出情報は、支出作成APIへJSONで送信する。
 
 ### 13.3 支出管理API
 
