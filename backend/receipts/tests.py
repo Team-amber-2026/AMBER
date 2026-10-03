@@ -39,6 +39,8 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
         )
         history_model = apps.get_model("receipts", "OCRCorrectionHistory")
         archive_table = "receipts_ocrcorrectionhistory_legacy_job_schema"
+        json_type = connection.data_types["JSONField"]
+        datetime_type = connection.data_types["DateTimeField"]
 
         try:
             with connection.schema_editor() as schema_editor:
@@ -50,13 +52,13 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
                     """
                     CREATE TABLE receipts_ocrcorrectionhistory (
                         id bigint NOT NULL PRIMARY KEY,
-                        ocr_values text NOT NULL,
-                        saved_values text NOT NULL,
-                        created_at timestamp NOT NULL,
+                        ocr_values {json_type} NOT NULL,
+                        saved_values {json_type} NOT NULL,
+                        created_at {datetime_type} NOT NULL,
                         expense_id bigint REFERENCES expenses_expense(id),
                         job_id char(32) NOT NULL REFERENCES receipts_ocrjob(id)
                     )
-                    """
+                    """.format(json_type=json_type, datetime_type=datetime_type)
                 )
                 cursor.execute("INSERT INTO receipts_ocrjob (id) VALUES ('legacy-job')")
                 cursor.execute(
@@ -104,6 +106,8 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
             category="その他",
         )
 
+        json_type = connection.data_types["JSONField"]
+        datetime_type = connection.data_types["DateTimeField"]
         with connection.cursor() as cursor:
             cursor.execute("CREATE TABLE receipts_ocrjob (id char(32) PRIMARY KEY)")
             cursor.execute(
@@ -112,11 +116,11 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
                     id integer PRIMARY KEY,
                     expense_id bigint REFERENCES expenses_expense(id),
                     job_id char(32) NOT NULL REFERENCES receipts_ocrjob(id),
-                    ocr_values text NOT NULL,
-                    saved_values text NOT NULL,
-                    created_at datetime NOT NULL
+                    ocr_values {json_type} NOT NULL,
+                    saved_values {json_type} NOT NULL,
+                    created_at {datetime_type} NOT NULL
                 )
-                """
+                """.format(json_type=json_type, datetime_type=datetime_type)
             )
             cursor.execute("INSERT INTO receipts_ocrjob (id) VALUES ('legacy-job')")
             cursor.execute(
