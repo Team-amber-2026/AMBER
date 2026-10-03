@@ -150,3 +150,100 @@ class AuthApiTests(APITestCase):
         response = self.client.get(reverse("auth-logout"), HTTP_ACCEPT="text/html")
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response["Content-Type"])
+
+
+@override_settings(
+    ALLOWED_HOSTS=["amber-api-usdz.onrender.com"],
+    CSRF_TRUSTED_ORIGINS=["https://amber.example.com"],
+    SESSION_COOKIE_SECURE=True,
+    CSRF_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    CSRF_COOKIE_SAMESITE="Lax",
+)
+class ProxiedAuthApiTests(APITestCase):
+    """Exercise Django with the backend Host and the browser's frontend Origin."""
+
+    def setUp(self):
+        self.client = APIClient(enforce_csrf_checks=True)
+        self.client.defaults.update(
+            HTTP_HOST="amber-api-usdz.onrender.com",
+            HTTP_ORIGIN="https://amber.example.com",
+            HTTP_X_FORWARDED_PROTO="https",
+        )
+        self.credentials = {
+            "username": "proxy-user",
+            "email": "proxy@example.com",
+            "password": "StrongPass123",
+        }
+
+    def assert_first_party_cookie(self, cookie):
+        self.assertEqual(cookie["domain"], "")
+        self.assertEqual(cookie["path"], "/")
+        self.assertEqual(cookie["samesite"], "Lax")
+        self.assertTrue(cookie["secure"])
+
+    def test_registration_login_reload_expenses_and_logout_through_proxy(self):
+        csrf_response = self.client.get(reverse("auth-csrf"))
+        self.assertEqual(csrf_response.status_code, 200)
+        self.assertTrue(csrf_response.wsgi_request.is_secure())
+        self.assert_first_party_cookie(csrf_response.cookies["csrftoken"])
+        token = csrf_response.data["csrfToken"]
+
+        register_response = self.client.post(
+            reverse("auth-register"), self.credentials,
+            format="json", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(register_response.status_code, 201)
+        # Registration retains the existing contract: the user logs in next.
+        login_response = self.client.post(
+            reverse("auth-login"), self.credentials,
+            format="json", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assert_first_party_cookie(login_response.cookies["sessionid"])
+        self.assertTrue(login_response.cookies["sessionid"]["httponly"])
+        self.assert_first_party_cookie(login_response.cookies["csrftoken"])
+
+        reloaded_client = APIClient(enforce_csrf_checks=True)
+        reloaded_client.defaults.update(self.client.defaults)
+        reloaded_client.cookies = self.client.cookies.copy()
+        user_response = reloaded_client.get(reverse("auth-user"))
+        self.assertEqual(user_response.status_code, 200)
+        self.assertEqual(user_response.data["username"], self.credentials["username"])
+        self.assertEqual(reloaded_client.get("/api/expenses/").status_code, 200)
+
+        # Django rotates the CSRF secret at login. The old token must fail.
+        stale_logout = reloaded_client.post(reverse("auth-logout"), HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(stale_logout.status_code, 403)
+        logout_response = reloaded_client.post(
+            reverse("auth-logout"),
+            HTTP_X_CSRFTOKEN=reloaded_client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(logout_response.status_code, 204)
+        self.assertEqual(logout_response.cookies["sessionid"]["max-age"], 0)
+        self.assertEqual(reloaded_client.get(reverse("auth-user")).status_code, 403)
+        self.assertEqual(reloaded_client.get("/api/expenses/").status_code, 403)
+
+    def test_proxy_does_not_bypass_csrf_cookie_or_header_checks(self):
+        response = self.client.post(reverse("auth-register"), self.credentials, format="json")
+        self.assertEqual(response.status_code, 403)
+        token = self.client.get(reverse("auth-csrf")).data["csrfToken"]
+        response = self.client.post(reverse("auth-register"), self.credentials, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.client.cookies.clear()
+        response = self.client.post(
+            reverse("auth-register"), self.credentials,
+            format="json", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(User.objects.filter(username=self.credentials["username"]).exists())
+
+    def test_proxy_rejects_untrusted_origin_even_with_valid_csrf_token(self):
+        token = self.client.get(reverse("auth-csrf")).data["csrfToken"]
+        response = self.client.post(
+            reverse("auth-register"), self.credentials,
+            format="json", HTTP_X_CSRFTOKEN=token,
+            HTTP_ORIGIN="https://untrusted.example.com",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(User.objects.filter(username=self.credentials["username"]).exists())

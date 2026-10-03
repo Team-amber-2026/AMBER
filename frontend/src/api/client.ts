@@ -1,7 +1,11 @@
 import axios from "axios";
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api",
+  // Production always uses the Vercel proxy, including when an old Render URL
+  // remains in the deployment's VITE_API_BASE_URL environment variable.
+  baseURL: import.meta.env.PROD
+    ? "/api"
+    : import.meta.env.VITE_API_BASE_URL?.trim() || "http://localhost:8000/api",
   withCredentials: true,
   xsrfCookieName: "csrftoken",
   xsrfHeaderName: "X-CSRFToken",
