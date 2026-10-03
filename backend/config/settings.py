@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "cloudinary",
     "accounts",
     "receipts",
     "expenses",
@@ -142,3 +143,5 @@ CSRF_COOKIE_SAMESITE = "None" if DEBUG else os.environ.get("CSRF_COOKIE_SAMESITE
 SESSION_COOKIE_SECURE = True if DEBUG else os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = True if DEBUG else os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")
