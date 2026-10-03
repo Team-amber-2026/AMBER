@@ -1,10 +1,68 @@
+import os
+from importlib import reload
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient, APITestCase
 
 
 User = get_user_model()
+
+
+class SettingsTests(SimpleTestCase):
+    def test_cookie_policy_preserves_local_http_and_secure_production_defaults(self):
+        import config.settings as settings_module
+
+        scenarios = [
+            ({"DEBUG": "True"}, False, "Lax"),
+            ({"DEBUG": "True", "SESSION_COOKIE_SECURE": "True",
+              "CSRF_COOKIE_SECURE": "True", "SESSION_COOKIE_SAMESITE": "None",
+              "CSRF_COOKIE_SAMESITE": "None"}, False, "Lax"),
+            ({"DEBUG": "False"}, True, "Lax"),
+            ({"DEBUG": "False", "SESSION_COOKIE_SECURE": "False",
+              "CSRF_COOKIE_SECURE": "False", "SESSION_COOKIE_SAMESITE": "Strict",
+              "CSRF_COOKIE_SAMESITE": "Strict"}, False, "Strict"),
+        ]
+        try:
+            for environment, secure, samesite in scenarios:
+                with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
+                    configured = reload(settings_module)
+                    self.assertEqual(configured.SESSION_COOKIE_SECURE, secure)
+                    self.assertEqual(configured.CSRF_COOKIE_SECURE, secure)
+                    self.assertEqual(configured.SESSION_COOKIE_SAMESITE, samesite)
+                    self.assertEqual(configured.CSRF_COOKIE_SAMESITE, samesite)
+        finally:
+            reload(settings_module)
+
+    def test_vercel_frontend_defaults_are_scoped_to_the_configured_project(self):
+        with patch.dict(
+            os.environ,
+            {
+                "FRONTEND_ORIGIN": "https://amber-lilac.vercel.app",
+                "FRONTEND_PREVIEW_ORIGINS": "https://amber-lilac-git-feature-vercel-repair-hyosetsus-projects.vercel.app",
+            },
+            clear=False,
+        ):
+            import config.settings as settings_module
+
+            reloaded_settings = reload(settings_module)
+
+            self.assertIn("https://amber-lilac.vercel.app", reloaded_settings.CORS_ALLOWED_ORIGINS)
+            self.assertIn("https://amber-lilac.vercel.app", reloaded_settings.CORS_ALLOWED_ORIGINS)
+            self.assertIn(
+                "https://amber-lilac-git-feature-vercel-repair-hyosetsus-projects.vercel.app",
+                reloaded_settings.CORS_ALLOWED_ORIGINS,
+            )
+            self.assertIn("https://amber-lilac.vercel.app", reloaded_settings.CSRF_TRUSTED_ORIGINS)
+            self.assertIn(
+                "https://amber-lilac-git-feature-vercel-repair-hyosetsus-projects.vercel.app",
+                reloaded_settings.CSRF_TRUSTED_ORIGINS,
+            )
+            self.assertNotIn("https://*.vercel.app", reloaded_settings.CSRF_TRUSTED_ORIGINS)
+            self.assertNotIn("https://amber-lilac-attacker.vercel.app", reloaded_settings.CORS_ALLOWED_ORIGINS)
+            self.assertNotIn("https://attacker.vercel.app", reloaded_settings.CORS_ALLOWED_ORIGINS)
 
 
 @override_settings(ROOT_URLCONF="config.urls")
@@ -24,6 +82,8 @@ class AuthApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("csrfToken", response.data)
         self.assertIn("csrftoken", response.cookies)
+        self.assertFalse(response.cookies["csrftoken"]["secure"])
+        self.assertEqual(response.cookies["csrftoken"]["samesite"], "Lax")
 
     def test_user_endpoint_sets_csrf_cookie_when_anonymous(self):
         response = self.client.get(reverse("auth-user"))
@@ -44,6 +104,7 @@ class AuthApiTests(APITestCase):
             reverse("auth-register"),
             {"username": "alice", "email": "alice@example.com", "password": "StrongPass123"},
             HTTP_X_CSRFTOKEN=token,
+            HTTP_ORIGIN="http://localhost:3000",
             format="json",
         )
 
@@ -83,10 +144,13 @@ class AuthApiTests(APITestCase):
             reverse("auth-login"),
             {"username": "alice", "password": "StrongPass123"},
             HTTP_X_CSRFTOKEN=token,
+            HTTP_ORIGIN="http://localhost:3000",
             format="json",
         )
         self.assertEqual(login_response.status_code, 200)
         self.assertIn("sessionid", login_response.cookies)
+        self.assertFalse(login_response.cookies["sessionid"]["secure"])
+        self.assertEqual(login_response.cookies["sessionid"]["samesite"], "Lax")
 
         user_response = self.client.get(reverse("auth-user"))
         self.assertEqual(user_response.status_code, 200)

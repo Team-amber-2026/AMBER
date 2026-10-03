@@ -26,8 +26,6 @@ services:
         sync: false
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
-      - key: CLOUDINARY_URL
-        sync: false
       - key: SESSION_COOKIE_SAMESITE
         value: "Lax"
       - key: CSRF_COOKIE_SAMESITE

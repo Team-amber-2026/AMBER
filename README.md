@@ -265,6 +265,7 @@ Render では `render.yaml` を使って Django API と Render PostgreSQL を定
 | `DATABASE_URL` | Render PostgreSQL の接続文字列 |
 | `ALLOWED_HOSTS` | `.onrender.com` または利用するバックエンドドメイン |
 | `FRONTEND_ORIGIN` | Vercel のフロントエンドURL |
+| `FRONTEND_PREVIEW_ORIGINS` | 検証対象PreviewのURL（カンマ区切り）。CORS / CSRF許可リストの既定値へ追加 |
 | `CORS_ALLOWED_ORIGINS` | Vercel のフロントエンドURL |
 | `CSRF_TRUSTED_ORIGINS` | Vercel のフロントエンドURL |
 | `SESSION_COOKIE_SAMESITE` | `Lax`（同一オリジンの `/api` を使用） |
@@ -272,7 +273,7 @@ Render では `render.yaml` を使って Django API と Render PostgreSQL を定
 | `SESSION_COOKIE_SECURE` | 本番では `True` |
 | `CSRF_COOKIE_SECURE` | 本番では `True` |
 
-既存のRenderサービスではDashboardの環境変数も確認してください。`render.yaml` の変更だけでは、手動設定済みの値が更新されない場合があります。`DEBUG=False` のとき、Secure Cookieの既定値は `True` です。明示的な環境変数がある場合はそちらが優先されます。
+既存のRenderサービスではDashboardの環境変数も確認してください。`render.yaml` の変更だけでは、手動設定済みの値が更新されない場合があります。`DEBUG=False` のとき、Secure Cookieの既定値は `True` です。明示的な環境変数がある場合はそちらが優先されます。`DEBUG=True` のローカルHTTP開発では、PR #47で追加された挙動を維持し、Secureを `False`、SameSiteを `Lax` にします。
 
 `CSRF_TRUSTED_ORIGINS` に実際のVercel公開URL（スキームを含み、末尾のパスは含めない）を設定します。Previewで認証を確認する場合は、そのPreviewのURLもカンマ区切りで追加します。`CORS_ALLOWED_ORIGINS` はローカルでDjangoへ直接接続するときに必要です。本番の同一オリジン通信ではブラウザ側のCORS許可は不要ですが、既存設定は残せます。
 

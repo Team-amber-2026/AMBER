@@ -54,7 +54,6 @@ export type ExpenseSavePayload = {
 export type SavedExpense = ExpenseSavePayload & {
   id: number;
   user: number;
-  image: string;
   created_at: string;
   updated_at: string;
 };
