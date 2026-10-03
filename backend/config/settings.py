@@ -44,7 +44,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
-    "cloudinary",
     "accounts",
     "receipts",
     "expenses",
@@ -136,12 +135,15 @@ CORS_ALLOW_CREDENTIALS = True
 
 DEFAULT_CSRF_TRUSTED_ORIGINS = build_vercel_csrf_origins(FRONTEND_ORIGIN, FRONTEND_PREVIEW_ORIGINS)
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", ",".join(DEFAULT_CSRF_TRUSTED_ORIGINS))
+if DEBUG:
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        if origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(origin)
 CSRF_COOKIE_HTTPONLY = False
 
-SESSION_COOKIE_SAMESITE = "None" if DEBUG else os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
-CSRF_COOKIE_SAMESITE = "None" if DEBUG else os.environ.get("CSRF_COOKIE_SAMESITE", "Lax")
-SESSION_COOKIE_SECURE = True if DEBUG else os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
-CSRF_COOKIE_SECURE = True if DEBUG else os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+SESSION_COOKIE_SAMESITE = "Lax" if DEBUG else os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+CSRF_COOKIE_SAMESITE = "Lax" if DEBUG else os.environ.get("CSRF_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SECURE = False if DEBUG else os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
+CSRF_COOKIE_SECURE = False if DEBUG else os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")

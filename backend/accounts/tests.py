@@ -58,6 +58,8 @@ class AuthApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("csrfToken", response.data)
         self.assertIn("csrftoken", response.cookies)
+        self.assertFalse(response.cookies["csrftoken"]["secure"])
+        self.assertEqual(response.cookies["csrftoken"]["samesite"], "Lax")
 
     def test_user_endpoint_sets_csrf_cookie_when_anonymous(self):
         response = self.client.get(reverse("auth-user"))
@@ -78,6 +80,7 @@ class AuthApiTests(APITestCase):
             reverse("auth-register"),
             {"username": "alice", "email": "alice@example.com", "password": "StrongPass123"},
             HTTP_X_CSRFTOKEN=token,
+            HTTP_ORIGIN="http://localhost:3000",
             format="json",
         )
 
@@ -117,10 +120,13 @@ class AuthApiTests(APITestCase):
             reverse("auth-login"),
             {"username": "alice", "password": "StrongPass123"},
             HTTP_X_CSRFTOKEN=token,
+            HTTP_ORIGIN="http://localhost:3000",
             format="json",
         )
         self.assertEqual(login_response.status_code, 200)
         self.assertIn("sessionid", login_response.cookies)
+        self.assertFalse(login_response.cookies["sessionid"]["secure"])
+        self.assertEqual(login_response.cookies["sessionid"]["samesite"], "Lax")
 
         user_response = self.client.get(reverse("auth-user"))
         self.assertEqual(user_response.status_code, 200)

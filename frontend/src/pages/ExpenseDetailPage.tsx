@@ -94,12 +94,6 @@ export default function ExpenseDetailPage({ onLogout, isSubmitting }: ExpenseDet
               <div><dt>購入日</dt><dd>{expense.purchased_at}</dd></div>
               <div><dt>金額</dt><dd>{formatCurrency(expense.total_amount)}</dd></div>
               <div><dt>カテゴリー</dt><dd>{expense.category}</dd></div>
-              {expense.image ? (
-                <div className={styles.fullWidth}>
-                  <dt>画像</dt>
-                  <dd><img src={expense.image} alt="レシート画像" /></dd>
-                </div>
-              ) : null}
               {expense.raw_ocr_text ? (
                 <div className={styles.fullWidth}>
                   <dt>OCR全文</dt>
@@ -125,7 +119,7 @@ export default function ExpenseDetailPage({ onLogout, isSubmitting }: ExpenseDet
 
       <dialog ref={dialogRef} className={styles.dialog} onCancel={closeDialog}>
         <h2>支出を削除しますか？</h2>
-        <p>この操作は取り消せません。支出データと保存済み画像を削除します。</p>
+        <p>この操作は取り消せません。支出データを削除します。</p>
         <div className={styles.dialogActions}>
           <button type="button" className={styles.deleteButton} onClick={handleDelete} disabled={deleting}>
             {deleting ? "削除中..." : "削除する"}
