@@ -245,11 +245,11 @@ Vercel では `frontend` ディレクトリをプロジェクトルートとし�
 | Framework Preset | Vite |
 | Build Command | `npm run build` |
 | Output Directory | `dist` |
-| API接続先 | 本番ビルドでは `/api` 固定（`VITE_API_BASE_URL` はローカル開発用） |
+| Environment Variables | `VITE_API_BASE_URL=/api`（本番ビルドの接続先も `/api` 固定） |
 
 `frontend/vercel.json` は `/api/:path*` を `https://amber-api-usdz.onrender.com/api/:path*` へ転送し、その後に SPA の `index.html` フォールバックを適用します。ブラウザから見たAPIと画面のオリジンが一致するため、Safariのトラッキング防止やChrome・Edgeのプライベートブラウズでも、クロスサイトCookieに依存せず認証できます。
 
-本番では、古い `VITE_API_BASE_URL` にRender URLが残っていても `/api` を使用します。Vercel Dashboardの古い設定は削除してください。転送先を変える場合は `frontend/vercel.json` の `destination` を変更し、再デプロイします。Previewも同じRenderへ転送するため、確認にはテスト用アカウントを使ってください。別の検証用バックエンドを使う場合は、検証用ブランチの `destination` を変更します。
+本番では、古い `VITE_API_BASE_URL` にRender URLが残っていても `/api` を使用します。Vercel Dashboardの設定も `VITE_API_BASE_URL=/api` に統一してください。転送先を変える場合は `frontend/vercel.json` の `destination` を変更し、再デプロイします。Previewも同じRenderへ転送するため、確認にはテスト用アカウントを使ってください。別の検証用バックエンドを使う場合は、検証用ブランチの `destination` を変更します。
 
 ローカルの `npm run dev` は従来どおり `http://localhost:8000/api` に接続します。必要に応じて `frontend/.env.local` の `VITE_API_BASE_URL` で開発用APIを指定できます。`npm run preview` は本番ビルドの `/api` を使用しますが、Vercel Rewriteを実行しないため、認証確認には開発サーバーかVercel Previewを使います。
 
@@ -284,11 +284,20 @@ Render では `render.yaml` を使って Django API と Render PostgreSQL を定
 
 1. 新規登録 → ログイン → 再読み込み → 支出一覧 → ログアウトを実行する（登録成功後は既存仕様どおりログイン画面へ進む）。
 2. NetworkでCSRF取得・登録・ログイン・ユーザー取得・支出一覧・ログアウトがすべて公開URLの `/api/*` を使用し、Renderへ直接通信していないことを確認する。
-3. `csrftoken` / `sessionid` が公開ホストに保存され、Domainなし・Path `/`・Secure・SameSite `Lax` であることを確認する。ログイン後のCSRFトークン更新、後続リクエストへのCookieと `X-CSRFToken` の送信も確認する。
-4. ログアウト後のユーザー取得は403、重複登録は400となり、APIのJSONがHTMLに置き換わらないことを確認する。ログアウトで `sessionid` が削除されることも確認する。
+3. `csrftoken` / `sessionid` が公開ホストに保存され、Domainなし・Path `/`・Secure・SameSite `Lax` であることを確認する。`Set-Cookie` の `Max-Age` / `Expires` と保存後の有効期限がDjangoの `SESSION_COOKIE_AGE` / `CSRF_COOKIE_AGE` に一致することも確認する。ログイン後のCSRFトークン更新、後続リクエストへのCookieと `X-CSRFToken` の送信も確認する。
+4. CSRF取得・ログイン成功は200、登録成功は201、ログアウト成功は204、ログアウト後のユーザー取得は403、重複登録は400となり、APIのJSONがHTMLに置き換わらないことを確認する。`Content-Type`、`Set-Cookie`、`Vary` などの必要なレスポンスヘッダーが転送後も保持されることと、ログアウトで `sessionid` が削除されることも確認する。
 5. `/login` や `/expenses` の直接アクセス・再読み込みがSPAとして表示されることを確認する。
 
 プライベートウィンドウをすべて閉じた後のCookie削除はブラウザの仕様です。認証維持は同じプライベートセッション内の再読み込みで確認します。自動テストはDjangoのCSRF・Cookie設定とAPIクライアントの通信設定を検証しますが、Vercel経由のヘッダー・Cookie転送と各ブラウザの実機確認は別途必要です。
+
+この同一オリジン化はIssue #41で追跡します（#45のSafari条件を統合済み）。Cookieを読めない場合のCSRF永続キャッシュ廃止は別のIssue #39、パスワード案内は #42で扱います。同一オリジン化の確認だけで、それらの修正完了とは判断しません。
+
+本番反映後は、以下の結果をIssue #30（本番統合）へ引き継ぎ、#31（MVP最終QA）で参照できるようにします。環境変数は名前と確認結果のみ記録し、秘密値は記載しません。
+
+- VercelとRenderそれぞれに反映されたコミットSHA、反映日時、環境、PR #46との対応
+- `VITE_API_BASE_URL`、Origin設定、Cookie設定などの環境変数名と確認結果
+- Mac Safari通常／プライベート、Chrome通常／シークレット、Edge通常／InPrivateのブラウザ・OSバージョンと、登録・ログイン・再読み込み・支出一覧・ログアウトの結果
+- APIステータス・レスポンスヘッダー・Cookie属性と有効期限・SPA直接アクセスの確認結果、および未確認項目と失敗時の再現手順
 
 Render Web Service と Render PostgreSQL が同じ workspace かつ同じ region にある場合は、PostgreSQL の internal connection string を使います。
 別 region や別 workspace の internal connection string は名前解決できないため、同じ region にそろえるか、必要に応じて external connection string を使います。
