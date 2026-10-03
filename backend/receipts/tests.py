@@ -21,6 +21,22 @@ User = get_user_model()
 
 
 class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
+    def setUp(self):
+        self._drop_legacy_test_tables()
+        self.addCleanup(self._drop_legacy_test_tables)
+
+    @staticmethod
+    def _drop_legacy_test_tables():
+        temporary_tables = (
+            "receipts_ocrcorrectionhistory_legacy_job_schema",
+            "receipts_ocrjob",
+        )
+        with connection.cursor() as cursor:
+            tables = set(connection.introspection.table_names(cursor))
+            for table in temporary_tables:
+                if table in tables:
+                    cursor.execute(f"DROP TABLE {connection.ops.quote_name(table)}")
+
     def test_copying_legacy_ids_resets_sequence_and_detaches_archive(self):
         user = User.objects.create_user(username="copy-test", password="test-password")
         migrated_expense = Expense.objects.create(
