@@ -5,14 +5,9 @@ import { fetchExpenses } from "../api/expenses";
 import Toast from "../components/Toast";
 import type { SavedExpense } from "../types";
 import { formatCurrency } from "../utils/format";
-import styles from "./ComingSoonPage.module.css";
+import styles from "./Page.module.css";
 
-type ExpenseListPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
-
-export default function ExpenseListPage({ onLogout, isSubmitting }: ExpenseListPageProps) {
+export default function ExpenseListPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [expenses, setExpenses] = useState<SavedExpense[]>([]);
@@ -54,9 +49,6 @@ export default function ExpenseListPage({ onLogout, isSubmitting }: ExpenseListP
           <p className={styles.eyebrow}>支出一覧</p>
           <h1>保存済みの支出</h1>
         </div>
-        <button type="button" className={styles.buttonSecondary} onClick={onLogout} disabled={isSubmitting}>
-          ログアウト
-        </button>
       </header>
 
       {error ? <p className={styles.error}>{error}</p> : null}
@@ -78,6 +70,7 @@ export default function ExpenseListPage({ onLogout, isSubmitting }: ExpenseListP
                 onClick={() => navigate(`/expenses/${expense.id}`)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
                     navigate(`/expenses/${expense.id}`);
                   }
                 }}
@@ -89,8 +82,8 @@ export default function ExpenseListPage({ onLogout, isSubmitting }: ExpenseListP
                   cursor: "pointer",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
-                  <div>
+                <div className={styles.expenseRow}>
+                  <div className={styles.expenseDescription}>
                     <strong>{expense.shop_name || "未入力"}</strong>
                     <div style={{ color: "#6b7280", marginTop: "4px" }}>
                       {expense.purchased_at} / {expense.category}
