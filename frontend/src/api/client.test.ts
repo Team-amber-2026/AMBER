@@ -58,6 +58,28 @@ describe("API connection", () => {
     await expect(client.delete("/expenses/1/")).resolves.toMatchObject({ status: 204 });
   });
 
+  it.each([
+    ["post", "/auth/register/"],
+    ["post", "/expenses/"],
+    ["put", "/expenses/1/"],
+    ["patch", "/expenses/1/"],
+    ["delete", "/expenses/1/"],
+  ])("uses the current cookie for %s %s", async (method, url) => {
+    const client = await loadClient(true);
+    const sentTokens: string[] = [];
+    client.defaults.adapter = async (config) => {
+      sentTokens.push(config.headers.get("X-CSRFToken") as string);
+      return { config, data: "", status: 204, statusText: "No Content", headers: {} };
+    };
+
+    document.cookie = "csrftoken=register-token";
+    await client.request({ method, url, data: {} });
+    document.cookie = "csrftoken=expense-token";
+    await client.request({ method, url, data: {} });
+
+    expect(sentTokens).toEqual(["register-token", "expense-token"]);
+  });
+
   it("keeps production requests same-origin even with the previous Render URL", async () => {
     const client = await loadClient(true, "https://amber-api-usdz.onrender.com/api");
     expect(client.getUri({ url: "/auth/user/" })).toBe("/api/auth/user/");
@@ -105,5 +127,95 @@ describe("API connection", () => {
     expect(requests.slice(2).map((request) => request.headers.get("X-CSRFToken"))).toEqual([
       "before-login", "rotated-token", "rotated-token",
     ]);
+  });
+
+  it("fetches a fresh token before each unsafe request when the cookie is unavailable", async () => {
+    const client = await loadClient(true);
+    const sentTokens: string[] = [];
+    let csrfFetches = 0;
+    client.defaults.adapter = async (config) => {
+      if (config.url === "/auth/csrf/") {
+        csrfFetches += 1;
+        return {
+          config,
+          data: { csrfToken: `token-${csrfFetches}` },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+        };
+      }
+
+      sentTokens.push(config.headers.get("X-CSRFToken") as string);
+      return { config, data: "", status: 204, statusText: "No Content", headers: {} };
+    };
+
+    await client.post("/auth/login/", {});
+    await client.post("/auth/logout/", {});
+
+    expect(csrfFetches).toBe(2);
+    expect(sentTokens).toEqual(["token-1", "token-2"]);
+  });
+
+  it("shares concurrent CSRF fetches and retries after a failed fetch", async () => {
+    const client = await loadClient(true);
+    let csrfFetches = 0;
+    client.defaults.adapter = async (config) => {
+      if (config.url === "/auth/csrf/") {
+        csrfFetches += 1;
+        if (csrfFetches === 1) {
+          throw new Error("CSRF fetch failed");
+        }
+
+        await Promise.resolve();
+        return {
+          config,
+          data: { csrfToken: "current-token" },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+        };
+      }
+
+      return { config, data: "", status: 204, statusText: "No Content", headers: {} };
+    };
+
+    await expect(Promise.all([
+      client.post("/auth/logout/", {}),
+      client.post("/auth/logout/", {}),
+    ])).rejects.toThrow("CSRF fetch failed");
+    await client.post("/auth/logout/", {});
+
+    expect(csrfFetches).toBe(2);
+  });
+
+  it("fetches a current token again after a failed login", async () => {
+    const client = await loadClient(true);
+    const sentTokens: string[] = [];
+    let csrfFetches = 0;
+    client.defaults.adapter = async (config) => {
+      if (config.url === "/auth/csrf/") {
+        csrfFetches += 1;
+        return {
+          config,
+          data: { csrfToken: `token-${csrfFetches}` },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+        };
+      }
+
+      sentTokens.push(config.headers.get("X-CSRFToken") as string);
+      if (config.url === "/auth/login/") {
+        throw new Error("Invalid credentials");
+      }
+
+      return { config, data: "", status: 204, statusText: "No Content", headers: {} };
+    };
+
+    await expect(client.post("/auth/login/", {})).rejects.toThrow("Invalid credentials");
+    await client.post("/auth/logout/", {});
+
+    expect(csrfFetches).toBe(2);
+    expect(sentTokens).toEqual(["token-1", "token-2"]);
   });
 });
