@@ -171,7 +171,7 @@ class AuthApiTests(APITestCase):
                 self.assertTrue(User.objects.get(username=f"valid-{index}").check_password(password))
                 self.assertNotIn("password", response.data)
 
-    def test_html_registration_shows_guidance_before_input_and_errors_beside_password(self):
+    def test_html_registration_shows_guidance_and_errors_only_above_the_form(self):
         response = self.client.get(reverse("auth-register"), HTTP_ACCEPT="text/html")
         self.assertContains(response, "8文字以上で入力してください。")
         self.assertContains(response, "よく使われるパスワードは使用できません。")
@@ -184,11 +184,14 @@ class AuthApiTests(APITestCase):
             HTTP_ACCEPT="text/html",
             HTTP_X_CSRFTOKEN=token,
         )
-        self.assertContains(response, 'aria-describedby="password-help password-error"', status_code=400)
+        self.assertContains(response, 'aria-describedby="password-help register-errors"', status_code=400)
         self.assertContains(response, 'aria-invalid="true"', status_code=400)
-        self.assertContains(response, 'id="password-error" class="error" role="alert"', status_code=400)
+        self.assertContains(response, 'id="register-errors" class="error" role="alert"', status_code=400)
+        self.assertNotContains(response, 'id="password-error"', status_code=400)
+        html = response.content.decode()
         for message in response.context["errors"]["password"]:
-            self.assertContains(response, message, status_code=400)
+            self.assertEqual(html.count(str(message)), 1)
+            self.assertLess(html.index(str(message)), html.index("<form"))
         self.assertFalse(User.objects.filter(username="html-user").exists())
 
     def test_login_user_and_logout_flow(self):

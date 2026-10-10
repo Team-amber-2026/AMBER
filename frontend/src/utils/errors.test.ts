@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readableError, readableFieldError } from "./errors";
+import { readableError } from "./errors";
 
 describe("readableError", () => {
   it("explains an invalid JSON response without treating it as a successful request", () => {
@@ -38,25 +38,15 @@ describe("readableError", () => {
   });
 });
 
-describe("readableFieldError", () => {
-  it("keeps all password messages separate from other registration errors", () => {
-    expect(readableFieldError({
+describe("registration error summary", () => {
+  it("combines all field errors for the shared upper error display", () => {
+    expect(readableError({
       isAxiosError: true,
       response: { data: {
         username: ["このユーザー名は既に使用されています。"],
+        email: ["このメールアドレスは既に使用されています。"],
         password: ["8文字以上で入力してください。", "数字だけのパスワードは使用できません。"],
       } },
-    }, "password")).toBe("8文字以上で入力してください。\n数字だけのパスワードは使用できません。");
-  });
-
-  it("leaves network, HTML and unrelated field errors to the general error display", () => {
-    for (const error of [
-      new Error("Network error"),
-      { isAxiosError: true },
-      { isAxiosError: true, response: { data: "<html>Error</html>" } },
-      { isAxiosError: true, response: { data: { email: ["メールアドレスを入力してください。"] } } },
-    ]) {
-      expect(readableFieldError(error, "password")).toBe("");
-    }
+    })).toBe("username: このユーザー名は既に使用されています。\nemail: このメールアドレスは既に使用されています。\npassword: 8文字以上で入力してください。, 数字だけのパスワードは使用できません。");
   });
 });

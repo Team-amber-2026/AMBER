@@ -72,12 +72,6 @@
   margin: 4px 0 0;
 }
 
-.passwordError {
-  margin: 0;
-  color: #812828;
-  white-space: pre-wrap;
-}
-
 .notice,
 .error {
   margin: 0 0 16px;

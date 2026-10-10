@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import AuthPage from "./AuthPage";
 import type { AuthMode } from "../types";
 
-function renderAuth(mode: AuthMode, registerPasswordError = "") {
+function renderAuth(mode: AuthMode, error = "") {
   return renderToStaticMarkup(
     <MemoryRouter>
       <AuthPage
@@ -14,12 +14,10 @@ function renderAuth(mode: AuthMode, registerPasswordError = "") {
         loginForm={{ username: "", password: "" }}
         registerForm={{ username: "", email: "", password: "" }}
         message=""
-        error=""
-        registerPasswordError={registerPasswordError}
+        error={error}
         isSubmitting={false}
         onLogin={vi.fn()}
         onRegister={vi.fn()}
-        onRegisterPasswordChange={vi.fn()}
         setLoginForm={vi.fn()}
         setRegisterForm={vi.fn()}
       />
@@ -38,18 +36,31 @@ describe("registration password guidance", () => {
     expect(html).not.toContain('aria-invalid="true"');
   });
 
-  it("places server errors after the password help and links them for assistive technology", () => {
-    const html = renderAuth("register", "このパスワードは一般的すぎます。");
-    expect(html).toContain('aria-describedby="register-password-help register-password-error"');
-    expect(html).toContain('aria-invalid="true"');
-    expect(html).toContain('role="alert">このパスワードは一般的すぎます。</p>');
-    expect(html.indexOf('id="register-password-error"')).toBeGreaterThan(html.indexOf('id="register-password-help"'));
+  it("shows password and other errors once above the form", () => {
+    const messages = [
+      "このパスワードは短すぎます。最低 8 文字以上必要です。",
+      "このパスワードは一般的すぎます。",
+      "このユーザー名は既に使用されています。",
+      "このメールアドレスは既に使用されています。",
+      "通信に失敗しました。",
+    ];
+    const html = renderAuth("register", messages.join("\n"));
+    expect(html).toContain('id="auth-error"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('aria-describedby="register-password-help"');
+    expect(html).not.toContain('id="register-password-error"');
+    for (const message of messages) {
+      expect(html.split(message)).toHaveLength(2);
+      expect(html.indexOf(message)).toBeLessThan(html.indexOf("<form"));
+    }
   });
 
   it("does not apply new registration rules or errors to login", () => {
-    const html = renderAuth("login", "このパスワードは一般的すぎます。");
+    const message = "ユーザー名またはパスワードが正しくありません。";
+    const html = renderAuth("login", message);
     expect(html).toContain('id="login-password"');
     expect(html).not.toContain("register-password-help");
-    expect(html).not.toContain("このパスワードは一般的すぎます。");
+    expect(html.split(message)).toHaveLength(2);
+    expect(html.indexOf(message)).toBeLessThan(html.indexOf("<form"));
   });
 });

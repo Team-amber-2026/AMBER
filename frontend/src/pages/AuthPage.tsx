@@ -11,11 +11,9 @@ type AuthPageProps = {
   registerForm: RegisterForm;
   message: string;
   error: string;
-  registerPasswordError: string;
   isSubmitting: boolean;
   onLogin: () => Promise<boolean>;
   onRegister: () => Promise<boolean>;
-  onRegisterPasswordChange: (password: string) => void;
   setLoginForm: Dispatch<SetStateAction<LoginForm>>;
   setRegisterForm: Dispatch<SetStateAction<RegisterForm>>;
 };
@@ -26,11 +24,9 @@ export default function AuthPage({
   registerForm,
   message,
   error,
-  registerPasswordError,
   isSubmitting,
   onLogin,
   onRegister,
-  onRegisterPasswordChange,
   setLoginForm,
   setRegisterForm,
 }: AuthPageProps) {
@@ -58,7 +54,7 @@ export default function AuthPage({
         <h1>ためるん</h1>
 
         {message && <p className={styles.notice}>{message}</p>}
-        {error && <p className={styles.error}>{error}</p>}
+        {error && <p id="auth-error" className={styles.error} role="alert">{error}</p>}
 
         <div className={styles.tabs} role="tablist" aria-label="認証メニュー">
           <Link
@@ -145,10 +141,11 @@ export default function AuthPage({
               className={styles.input}
               type="password"
               autoComplete="new-password"
-              aria-describedby={`register-password-help${registerPasswordError ? " register-password-error" : ""}`}
-              aria-invalid={registerPasswordError ? true : undefined}
+              aria-describedby="register-password-help"
               value={registerForm.password}
-              onChange={(event) => onRegisterPasswordChange(event.target.value)}
+              onChange={(event) =>
+                setRegisterForm((current) => ({ ...current, password: event.target.value }))
+              }
               required
             />
 
@@ -160,11 +157,6 @@ export default function AuthPage({
               </ul>
               <p>文字種や記号の制限はありません（数字のみは不可）。</p>
             </div>
-            {registerPasswordError && (
-              <p id="register-password-error" className={styles.passwordError} role="alert">
-                {registerPasswordError}
-              </p>
-            )}
 
             <button className={styles.submitButton} type="submit" disabled={isSubmitting}>
               登録
