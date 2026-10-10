@@ -54,7 +54,7 @@ export default function AuthPage({
         <h1>ためるん</h1>
 
         {message && <p className={styles.notice}>{message}</p>}
-        {error && <p className={styles.error}>{error}</p>}
+        {error && <p id="auth-error" className={styles.error} role="alert">{error}</p>}
 
         <div className={styles.tabs} role="tablist" aria-label="認証メニュー">
           <Link
@@ -140,12 +140,23 @@ export default function AuthPage({
               id="register-password"
               className={styles.input}
               type="password"
+              autoComplete="new-password"
+              aria-describedby="register-password-help"
               value={registerForm.password}
               onChange={(event) =>
                 setRegisterForm((current) => ({ ...current, password: event.target.value }))
               }
               required
             />
+
+            <div id="register-password-help" className={styles.passwordHelp}>
+              <ul>
+                <li>8文字以上で入力してください。</li>
+                <li>よく使われるパスワードは使用できません。</li>
+                <li>数字だけのパスワードは使用できません。</li>
+              </ul>
+              <p>文字種や記号の制限はありません（数字のみは不可）。</p>
+            </div>
 
             <button className={styles.submitButton} type="submit" disabled={isSubmitting}>
               登録

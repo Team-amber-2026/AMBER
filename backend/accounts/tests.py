@@ -3,6 +3,8 @@ from importlib import reload
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient, APITestCase
@@ -131,6 +133,66 @@ class AuthApiTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("username", response.data)
         self.assertIn("email", response.data)
+
+    def test_register_rejects_passwords_described_in_the_guidance(self):
+        token = self._csrf_token()
+        scenarios = [
+            ("aB!xZ?7", "password_too_short"),
+            ("password", "password_too_common"),
+            ("918273645091", "password_entirely_numeric"),
+        ]
+        for password, expected_code in scenarios:
+            with self.subTest(expected_code=expected_code):
+                response = self.client.post(
+                    reverse("auth-register"),
+                    {"username": "password-test", "email": "test@example.com", "password": password},
+                    HTTP_X_CSRFTOKEN=token,
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400)
+                with self.assertRaises(ValidationError) as validation:
+                    validate_password(password)
+                self.assertIn(expected_code, [error.code for error in validation.exception.error_list])
+                self.assertEqual(response.data["password"], validation.exception.messages)
+                self.assertFalse(User.objects.filter(username="password-test").exists())
+
+    def test_register_accepts_eight_characters_without_new_character_type_rules(self):
+        token = self._csrf_token()
+        # No letters/digits combination or ASCII-only restriction is enforced.
+        for index, password in enumerate(("aB!xZ?qR", "QzxvJkmt", "風鈴と星空の散歩道", "!@#$^&*?")):
+            with self.subTest(password=password):
+                response = self.client.post(
+                    reverse("auth-register"),
+                    {"username": f"valid-{index}", "email": f"valid-{index}@example.com", "password": password},
+                    HTTP_X_CSRFTOKEN=token,
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 201)
+                self.assertTrue(User.objects.get(username=f"valid-{index}").check_password(password))
+                self.assertNotIn("password", response.data)
+
+    def test_html_registration_shows_guidance_and_errors_only_above_the_form(self):
+        response = self.client.get(reverse("auth-register"), HTTP_ACCEPT="text/html")
+        self.assertContains(response, "8文字以上で入力してください。")
+        self.assertContains(response, "よく使われるパスワードは使用できません。")
+        self.assertContains(response, "数字だけのパスワードは使用できません。")
+        self.assertContains(response, 'aria-describedby="password-help"')
+        token = response.cookies["csrftoken"].value
+        response = self.client.post(
+            reverse("auth-register"),
+            {"username": "html-user", "email": "html@example.com", "password": "1234567"},
+            HTTP_ACCEPT="text/html",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertContains(response, 'aria-describedby="password-help register-errors"', status_code=400)
+        self.assertContains(response, 'aria-invalid="true"', status_code=400)
+        self.assertContains(response, 'id="register-errors" class="error" role="alert"', status_code=400)
+        self.assertNotContains(response, 'id="password-error"', status_code=400)
+        html = response.content.decode()
+        for message in response.context["errors"]["password"]:
+            self.assertEqual(html.count(str(message)), 1)
+            self.assertLess(html.index(str(message)), html.index("<form"))
+        self.assertFalse(User.objects.filter(username="html-user").exists())
 
     def test_login_user_and_logout_flow(self):
         User.objects.create_user(

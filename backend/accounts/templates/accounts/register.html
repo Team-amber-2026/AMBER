@@ -6,7 +6,7 @@
   <h1>新規登録</h1>
 
   {% if errors %}
-    <div class="error">
+    <div id="register-errors" class="error" role="alert">
       {% for field, messages in errors.items %}
         <div>{{ field }}: {{ messages|join:", " }}</div>
       {% endfor %}
@@ -22,7 +22,17 @@
     <input id="email" name="email" type="email" value="{{ values.email|default:'' }}" required>
 
     <label for="password">パスワード</label>
-    <input id="password" name="password" type="password" required>
+    <input id="password" name="password" type="password" autocomplete="new-password"
+      aria-describedby="password-help{% if errors.password %} register-errors{% endif %}"
+      {% if errors.password %}aria-invalid="true"{% endif %} required>
+    <div id="password-help">
+      <ul>
+        <li>8文字以上で入力してください。</li>
+        <li>よく使われるパスワードは使用できません。</li>
+        <li>数字だけのパスワードは使用できません。</li>
+      </ul>
+      <p>文字種や記号の制限はありません（数字のみは不可）。</p>
+    </div>
 
     <button type="submit">登録する</button>
   </form>
