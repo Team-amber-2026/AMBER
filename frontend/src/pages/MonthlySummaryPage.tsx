@@ -4,12 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { fetchMonthlySummary } from "../api/expenses";
 import type { MonthlyCategorySummary, MonthlySummaryResponse } from "../types";
 import { formatCurrency } from "../utils/format";
-import styles from "./ComingSoonPage.module.css";
-
-type MonthlySummaryPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
+import styles from "./Page.module.css";
 
 const monthLabels = [
   "1月",
@@ -26,7 +21,7 @@ const monthLabels = [
   "12月",
 ];
 
-export default function MonthlySummaryPage({ onLogout, isSubmitting }: MonthlySummaryPageProps) {
+export default function MonthlySummaryPage() {
   const navigate = useNavigate();
   const today = new Date();
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
@@ -80,9 +75,6 @@ export default function MonthlySummaryPage({ onLogout, isSubmitting }: MonthlySu
           <p className={styles.eyebrow}>集計</p>
           <h1>{currentYear}年 {currentMonth}月</h1>
         </div>
-        <button type="button" className={styles.buttonSecondary} onClick={onLogout} disabled={isSubmitting}>
-          ログアウト
-        </button>
       </header>
 
       <section className={styles.sectionBlock} aria-label="年月切り替え">
@@ -91,6 +83,7 @@ export default function MonthlySummaryPage({ onLogout, isSubmitting }: MonthlySu
             ◀ 前月
           </button>
           <select
+            aria-label="月"
             value={currentMonth}
             onChange={(event) => setCurrentMonth(Number(event.target.value))}
             style={{ minWidth: "96px", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cfd5c9" }}
@@ -102,6 +95,7 @@ export default function MonthlySummaryPage({ onLogout, isSubmitting }: MonthlySu
             ))}
           </select>
           <select
+            aria-label="年"
             value={currentYear}
             onChange={(event) => setCurrentYear(Number(event.target.value))}
             style={{ minWidth: "96px", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cfd5c9" }}

@@ -19,13 +19,9 @@ const initialConfirmForm: ExpenseSavePayload = {
   raw_ocr_text: "",
 };
 
-type ReceiptUploadPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
-
-export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUploadPageProps) {
+export default function ReceiptUploadPage() {
   const navigate = useNavigate();
+  const saveInFlight = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisGenerationRef = useRef(0);
   const analysisControllerRef = useRef<AbortController | null>(null);
@@ -130,18 +126,13 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
         raw_ocr_text: analyzedResult.raw_ocr_text,
       });
       setOcrProgress(1);
-      setMessage("ブラウザ内のOCR解析が完了しました。内容を確認して保存してください。");
+      setMessage("読み取りが完了しました。内容を確認して保存してください。");
     } catch (requestError) {
       if (controller.signal.aborted) {
         return;
       }
       if (generation === analysisGenerationRef.current) {
-        const detail = requestError instanceof Error ? requestError.message : "";
-        setError(
-          detail
-            ? `OCR解析に失敗しました（${detail}）。画像を選び直して、もう一度お試しください。`
-            : "OCR解析に失敗しました。画像を選び直して、もう一度お試しください。",
-        );
+        setError("読み取りに失敗しました。画像を選び直して、もう一度お試しください。");
       }
     } finally {
       if (analysisControllerRef.current === controller) {
@@ -154,12 +145,14 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
   }
 
   async function handleSave() {
+    if (saveInFlight.current) return;
     const validationError = validateConfirmForm(confirmForm);
     if (validationError) {
       setError(validationError);
       return;
     }
 
+    saveInFlight.current = true;
     setIsSaving(true);
     setError("");
     setMessage("");
@@ -169,11 +162,11 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
         ? { ...confirmForm, ocr_result: toClientOCRResult(result) }
         : confirmForm;
       const savedExpense = await saveExpense(payload);
-      navigate("/receipts/complete", { state: { expense: savedExpense } });
+      navigate("/receipts/complete", { replace: true, state: { expense: savedExpense } });
     } catch (requestError) {
-      setError(readableError(requestError));
-    } finally {
+      saveInFlight.current = false;
       setIsSaving(false);
+      setError(readableError(requestError));
     }
   }
 
@@ -199,26 +192,18 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
   }
 
   const hasSelection = selectedFile !== null;
-  const isBusy = isSubmitting || isAnalyzing || isSaving;
+  const isBusy = isAnalyzing || isSaving;
 
   return (
     <main className={styles.shell}>
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>レシート登録</p>
-          <h1>画像をアップロード</h1>
+          <h1>画像を選択して読み取り</h1>
         </div>
         <div className={styles.headerActions}>
-          <button type="button" className={styles.buttonSecondary} onClick={() => navigate("/home")}>
+          <button type="button" className={styles.buttonSecondary} onClick={() => navigate("/home")} disabled={isSaving}>
             ホーム
-          </button>
-          <button
-            type="button"
-            className={styles.buttonSecondary}
-            onClick={onLogout}
-            disabled={isBusy}
-          >
-            ログアウト
           </button>
         </div>
       </header>
@@ -231,20 +216,21 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
         </p>
       )}
 
-      <section className={styles.uploadPanel} aria-label="レシート画像アップロード">
+      <section className={styles.uploadPanel} aria-label="レシート画像選択">
         <label className={styles.dropArea}>
           <span className={styles.dropIcon} aria-hidden="true">
             +
           </span>
           <strong>{hasSelection ? selectedFile.name : "レシート画像を選択"}</strong>
-          <small>画像はサーバーへ送信せず、このブラウザ内だけでOCR解析します。</small>
+          <small>画像は読み取りにだけ使用し、保存しません。</small>
           <input
             ref={fileInputRef}
             type="file"
+            aria-label="レシート画像"
             accept="image/*"
             capture="environment"
             onChange={handleFileChange}
-            disabled={isAnalyzing}
+            disabled={isBusy}
           />
         </label>
 

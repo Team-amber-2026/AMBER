@@ -8,14 +8,9 @@ import { readableError } from "../utils/errors";
 import { formatCurrency } from "../utils/format";
 import styles from "./ExpenseDetailPage.module.css";
 
-type ExpenseDetailPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
-
 type NavigationState = { toast?: string };
 
-export default function ExpenseDetailPage({ onLogout, isSubmitting }: ExpenseDetailPageProps) {
+export default function ExpenseDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { expenseId } = useParams();
@@ -77,9 +72,6 @@ export default function ExpenseDetailPage({ onLogout, isSubmitting }: ExpenseDet
           <p className={styles.eyebrow}>支出詳細</p>
           <h1>{expense?.shop_name || "支出詳細"}</h1>
         </div>
-        <button type="button" className={styles.secondaryButton} onClick={onLogout} disabled={isSubmitting || deleting}>
-          ログアウト
-        </button>
       </header>
 
       {error ? <p className={styles.error}>{error}</p> : null}

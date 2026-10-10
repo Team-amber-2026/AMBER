@@ -16,12 +16,7 @@ const initialForm: ExpenseSavePayload = {
   raw_ocr_text: "",
 };
 
-type ExpenseEditPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
-
-export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditPageProps) {
+export default function ExpenseEditPage() {
   const navigate = useNavigate();
   const { expenseId } = useParams();
   const [expense, setExpense] = useState<SavedExpense | null>(null);
@@ -79,7 +74,7 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
     }
   }
 
-  const isBusy = isSubmitting || saving;
+  const isBusy = saving;
   return (
     <main className={styles.shell}>
       <header className={styles.header}>
@@ -87,9 +82,6 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
           <p className={styles.eyebrow}>支出編集</p>
           <h1>{expense?.shop_name || "支出を編集"}</h1>
         </div>
-        <button type="button" className={styles.secondaryButton} onClick={onLogout} disabled={isBusy}>
-          ログアウト
-        </button>
       </header>
 
       {error ? <p className={styles.error}>{error}</p> : null}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { fetchExpenses, fetchMonthlySummary } from "../api/expenses";
 import type { DashboardSummary, User } from "../types";
@@ -10,11 +10,9 @@ type HomePageProps = {
   user: User;
   message: string;
   error: string;
-  isSubmitting: boolean;
-  onLogout: () => Promise<void>;
 };
 
-export default function HomePage({ user, message, error, isSubmitting, onLogout }: HomePageProps) {
+export default function HomePage({ user, message, error }: HomePageProps) {
   const navigate = useNavigate();
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>({
     totalAmount: 0,
@@ -93,14 +91,6 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
           <p className={styles.eyebrow}>ためるん</p>
           <h1>{user.username}さんのホーム</h1>
         </div>
-        <button
-          type="button"
-          className={`${styles.buttonSecondary} ${styles.buttonCompact}`}
-          onClick={onLogout}
-          disabled={isSubmitting}
-        >
-          ログアウト
-        </button>
       </header>
 
       {message ? <p className={styles.notice}>{message}</p> : null}
@@ -144,6 +134,7 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
         >
           月次集計
         </button>
+        <Link className={styles.actionLink} to="/mypage">マイページ</Link>
       </section>
 
       <section className={styles.contentGrid}>
@@ -176,21 +167,9 @@ export default function HomePage({ user, message, error, isSubmitting, onLogout 
           ) : (
             <div className={styles.emptyState}>
               <strong>まだ支出がありません</strong>
-              <p>レシート登録ができるようになると、ここに直近の支出が表示されます。</p>
+              <p>レシートを登録すると、ここに最近の支出が表示されます。</p>
             </div>
           )}
-        </div>
-
-        <div className={`${styles.sectionBlock} ${styles.profileBlock}`}>
-          <h2>アカウント</h2>
-          <dl className={styles.definitionList}>
-            <dt>ID</dt>
-            <dd>{user.id}</dd>
-            <dt>ユーザー名</dt>
-            <dd>{user.username}</dd>
-            <dt>メール</dt>
-            <dd>{user.email || "-"}</dd>
-          </dl>
         </div>
       </section>
     </main>

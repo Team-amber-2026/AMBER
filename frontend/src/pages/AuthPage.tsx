@@ -152,6 +152,7 @@ export default function AuthPage({
             </button>
           </form>
         )}
+        <Link className={styles.backLink} to="/">トップへ戻る</Link>
       </section>
     </main>
   );
