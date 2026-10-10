@@ -15,6 +15,49 @@ async function loadClient(production: boolean, baseUrl?: string) {
 }
 
 describe("API connection", () => {
+  it.each(["/auth/user/", "/summary/monthly/", "/auth/csrf/"])(
+    "rejects an HTML page returned with status 200 for %s",
+    async (url) => {
+      const client = await loadClient(true);
+      client.defaults.adapter = async (config) => ({
+        config,
+        data: "<!doctype html><html><body><div id=\"root\"></div></body></html>",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "text/html" },
+      });
+
+      await expect(client.get(url)).rejects.toMatchObject({ code: "ERR_BAD_RESPONSE" });
+    },
+  );
+
+  it("does not submit a mutation when the CSRF endpoint returns HTML", async () => {
+    const client = await loadClient(true);
+    const requests: string[] = [];
+    client.defaults.adapter = async (config) => {
+      requests.push(config.url!);
+      return { config, data: "<!doctype html><html></html>", status: 200, statusText: "OK", headers: {} };
+    };
+
+    await expect(client.post("/expenses/", {})).rejects.toMatchObject({ code: "ERR_BAD_RESPONSE" });
+    expect(requests).toEqual(["/auth/csrf/"]);
+  });
+
+  it("accepts JSON responses and empty 204 responses", async () => {
+    const client = await loadClient(true);
+    client.defaults.adapter = async (config) => ({
+      config,
+      data: config.method === "get" ? '{"grand_total":1200}' : "",
+      status: config.method === "get" ? 200 : 204,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+    });
+
+    expect((await client.get("/summary/monthly/")).data).toEqual({ grand_total: 1200 });
+    document.cookie = "csrftoken=test-token";
+    await expect(client.delete("/expenses/1/")).resolves.toMatchObject({ status: 204 });
+  });
+
   it("keeps production requests same-origin even with the previous Render URL", async () => {
     const client = await loadClient(true, "https://amber-api-usdz.onrender.com/api");
     expect(client.getUri({ url: "/auth/user/" })).toBe("/api/auth/user/");

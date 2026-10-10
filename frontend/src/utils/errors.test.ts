@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { readableError } from "./errors";
 
 describe("readableError", () => {
+  it("explains an invalid JSON response without treating it as a successful request", () => {
+    expect(readableError({ isAxiosError: true, code: "ERR_BAD_RESPONSE" })).toBe(
+      "サーバーから正しいデータを取得できませんでした。時間をおいて再度お試しください。",
+    );
+  });
+
   it("does not render an HTML error page one character per line", () => {
     const error = {
       isAxiosError: true,

@@ -7,9 +7,14 @@ const apiClient = axios.create({
     ? "/api"
     : import.meta.env.VITE_API_BASE_URL?.trim() || "http://localhost:8000/api",
   withCredentials: true,
+  // A misrouted API request can return the SPA's HTML with HTTP 200. Reject it
+  // instead of treating it as a user or summary (which would display NaN).
+  responseType: "json",
+  transitional: { silentJSONParsing: false },
   xsrfCookieName: "csrftoken",
   xsrfHeaderName: "X-CSRFToken",
   headers: {
+    Accept: "application/json",
     "Content-Type": "application/json",
   },
 });

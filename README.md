@@ -247,7 +247,9 @@ Vercel では `frontend` ディレクトリをプロジェクトルートとし�
 | Output Directory | `dist` |
 | Environment Variables | `VITE_API_BASE_URL=/api`（本番ビルドの接続先も `/api` 固定） |
 
-`frontend/vercel.json` は `/api/:path*` を `https://amber-api-usdz.onrender.com/api/:path*` へ転送し、その後に SPA の `index.html` フォールバックを適用します。ブラウザから見たAPIと画面のオリジンが一致するため、Safariのトラッキング防止やChrome・Edgeのプライベートブラウズでも、クロスサイトCookieに依存せず認証できます。
+`frontend/vercel.json` は `/api/:path*/` を `https://amber-api-usdz.onrender.com/api/:path*/` へ転送します。VercelのRewriteは末尾スラッシュを厳密に区別するため、Django APIの末尾 `/` を保持します。末尾 `/` のないAPIリクエストも、転送先では `/` を付けて処理します。SPAの `index.html` フォールバックからは `/api` を除外し、APIエラーをHTMLで隠さない構成です。ブラウザから見たAPIと画面のオリジンが一致するため、Safariのトラッキング防止やChrome・Edgeのプライベートブラウズでも、クロスサイトCookieに依存せず認証できます。
+
+APIクライアントはJSONを厳密に解析します。設定不備などでHTTP 200のHTMLが返った場合もエラーとして扱い、誤ったログイン状態や金額の `NaN` 表示を防ぎます。`npm test` ではVercel公式のルーティングコンパイラで、認証・支出・集計APIの転送先とSPAフォールバックを検証します。
 
 本番では、古い `VITE_API_BASE_URL` にRender URLが残っていても `/api` を使用します。Vercel Dashboardの設定も `VITE_API_BASE_URL=/api` に統一してください。転送先を変える場合は `frontend/vercel.json` の `destination` を変更し、再デプロイします。Previewも同じRenderへ転送するため、確認にはテスト用アカウントを使ってください。別の検証用バックエンドを使う場合は、検証用ブランチの `destination` を変更します。
 
