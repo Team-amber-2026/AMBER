@@ -19,7 +19,6 @@ const apiClient = axios.create({
   },
 });
 
-let csrfToken: string | null = null;
 let csrfTokenRequest: Promise<string> | null = null;
 const unsafeMethods = new Set(["delete", "patch", "post", "put"]);
 
@@ -31,17 +30,10 @@ function getCookie(name: string) {
 }
 
 async function fetchCsrfToken() {
-  if (csrfToken) {
-    return csrfToken;
-  }
-
   if (!csrfTokenRequest) {
     csrfTokenRequest = apiClient
       .get<{ csrfToken: string }>("/auth/csrf/")
-      .then((response) => {
-        csrfToken = response.data.csrfToken;
-        return csrfToken;
-      })
+      .then((response) => response.data.csrfToken)
       .finally(() => {
         csrfTokenRequest = null;
       });
