@@ -1,7 +1,15 @@
 {
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/:path*/",
+      "destination": "https://amber-api-usdz.onrender.com/api/:path*/"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://amber-api-usdz.onrender.com/api/:path*/"
+    },
+    {
+      "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"
     }
   ]

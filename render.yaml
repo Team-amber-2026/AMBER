@@ -27,9 +27,9 @@ services:
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
       - key: SESSION_COOKIE_SAMESITE
-        value: "None"
+        value: "Lax"
       - key: CSRF_COOKIE_SAMESITE
-        value: "None"
+        value: "Lax"
       - key: SESSION_COOKIE_SECURE
         value: "True"
       - key: CSRF_COOKIE_SECURE

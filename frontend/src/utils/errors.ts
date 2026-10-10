@@ -10,6 +10,9 @@ type ErrorResponse = {
 };
 
 export function readableError(error: unknown) {
+  if (axios.isAxiosError(error) && error.code === "ERR_BAD_RESPONSE" && !error.response) {
+    return "サーバーから正しいデータを取得できませんでした。時間をおいて再度お試しください。";
+  }
   if (!isAxiosErrorResponse(error)) {
     return "通信に失敗しました。Djangoサーバーが起動しているか確認してください。";
   }

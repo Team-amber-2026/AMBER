@@ -30,4 +30,3 @@ export async function fetchMonthlySummary(year: number, month: number) {
   });
   return response.data;
 }
-

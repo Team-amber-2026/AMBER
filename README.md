@@ -245,10 +245,15 @@ Vercel では `frontend` ディレクトリをプロジェクトルートとし�
 | Framework Preset | Vite |
 | Build Command | `npm run build` |
 | Output Directory | `dist` |
-| Environment Variables | `VITE_API_BASE_URL=https://<Render Web Service URL>/api` |
+| Environment Variables | `VITE_API_BASE_URL=/api`（本番ビルドの接続先も `/api` 固定） |
 
-`frontend/vercel.json` は SPA の直接URLアクセスに対応するため、すべてのパスを `index.html` に rewrite します。
-Vercel の環境変数には `VITE_` で始まる名前を使うと、Vite のクライアントコードから参照できます。
+`frontend/vercel.json` は `/api/:path*/` を `https://amber-api-usdz.onrender.com/api/:path*/` へ転送します。VercelのRewriteは末尾スラッシュを厳密に区別するため、Django APIの末尾 `/` を保持します。末尾 `/` のないAPIリクエストも、転送先では `/` を付けて処理します。SPAの `index.html` フォールバックからは `/api` を除外し、APIエラーをHTMLで隠さない構成です。ブラウザから見たAPIと画面のオリジンが一致するため、Safariのトラッキング防止やChrome・Edgeのプライベートブラウズでも、クロスサイトCookieに依存せず認証できます。
+
+APIクライアントはJSONを厳密に解析します。設定不備などでHTTP 200のHTMLが返った場合もエラーとして扱い、誤ったログイン状態や金額の `NaN` 表示を防ぎます。`npm test` ではVercel公式のルーティングコンパイラで、認証・支出・集計APIの転送先とSPAフォールバックを検証します。
+
+本番では、古い `VITE_API_BASE_URL` にRender URLが残っていても `/api` を使用します。Vercel Dashboardの設定も `VITE_API_BASE_URL=/api` に統一してください。転送先を変える場合は `frontend/vercel.json` の `destination` を変更し、再デプロイします。Previewも同じRenderへ転送するため、確認にはテスト用アカウントを使ってください。別の検証用バックエンドを使う場合は、検証用ブランチの `destination` を変更します。
+
+ローカルの `npm run dev` は従来どおり `http://localhost:8000/api` に接続します。必要に応じて `frontend/.env.local` の `VITE_API_BASE_URL` で開発用APIを指定できます。`npm run preview` は本番ビルドの `/api` を使用しますが、Vercel Rewriteを実行しないため、認証確認には開発サーバーかVercel Previewを使います。
 
 ### バックエンド: Render Web Service
 
@@ -262,12 +267,40 @@ Render では `render.yaml` を使って Django API と Render PostgreSQL を定
 | `DATABASE_URL` | Render PostgreSQL の接続文字列 |
 | `ALLOWED_HOSTS` | `.onrender.com` または利用するバックエンドドメイン |
 | `FRONTEND_ORIGIN` | Vercel のフロントエンドURL |
+| `FRONTEND_PREVIEW_ORIGINS` | 検証対象PreviewのURL（カンマ区切り）。CORS / CSRF許可リストの既定値へ追加 |
 | `CORS_ALLOWED_ORIGINS` | Vercel のフロントエンドURL |
 | `CSRF_TRUSTED_ORIGINS` | Vercel のフロントエンドURL |
-| `SESSION_COOKIE_SAMESITE` | 本番では `None` |
-| `CSRF_COOKIE_SAMESITE` | 本番では `None` |
+| `SESSION_COOKIE_SAMESITE` | `Lax`（同一オリジンの `/api` を使用） |
+| `CSRF_COOKIE_SAMESITE` | `Lax`（同一オリジンの `/api` を使用） |
 | `SESSION_COOKIE_SECURE` | 本番では `True` |
 | `CSRF_COOKIE_SECURE` | 本番では `True` |
+
+既存のRenderサービスではDashboardの環境変数も確認してください。`render.yaml` の変更だけでは、手動設定済みの値が更新されない場合があります。`DEBUG=False` のとき、Secure Cookieの既定値は `True` です。明示的な環境変数がある場合はそちらが優先されます。`DEBUG=True` のローカルHTTP開発では、PR #47で追加された挙動を維持し、Secureを `False`、SameSiteを `Lax` にします。
+
+`CSRF_TRUSTED_ORIGINS` に実際のVercel公開URL（スキームを含み、末尾のパスは含めない）を設定します。Previewで認証を確認する場合は、そのPreviewのURLもカンマ区切りで追加します。`CORS_ALLOWED_ORIGINS` はローカルでDjangoへ直接接続するときに必要です。本番の同一オリジン通信ではブラウザ側のCORS許可は不要ですが、既存設定は残せます。
+
+転送時のHostはRender側ドメインを使うため、`ALLOWED_HOSTS` はRender側の値を維持します。`SECURE_PROXY_SSL_HEADER` は `X-Forwarded-Proto: https` によりHTTPSを認識します。CookieはDjangoの既定どおりDomainなし・Path `/` とし、Renderドメインへ固定しません。ブラウザはVercelから返る `Set-Cookie` をVercelホストのCookieとして保存します。CSRF保護は維持し、Axiosは `csrftoken` を `X-CSRFToken` に設定します。
+
+### 同一オリジン認証の公開環境確認
+
+デプロイ後に、Mac Safariの通常／プライベート、Chromeの通常／シークレット、Edgeの通常／InPrivateで以下を確認します。Safariの「サイト越えトラッキングを防ぐ」やサードパーティCookieの制限は変更しません。
+
+1. 新規登録 → ログイン → 再読み込み → 支出一覧 → ログアウトを実行する（登録成功後は既存仕様どおりログイン画面へ進む）。
+2. NetworkでCSRF取得・登録・ログイン・ユーザー取得・支出一覧・ログアウトがすべて公開URLの `/api/*` を使用し、Renderへ直接通信していないことを確認する。
+3. `csrftoken` / `sessionid` が公開ホストに保存され、Domainなし・Path `/`・Secure・SameSite `Lax` であることを確認する。`Set-Cookie` の `Max-Age` / `Expires` と保存後の有効期限がDjangoの `SESSION_COOKIE_AGE` / `CSRF_COOKIE_AGE` に一致することも確認する。ログイン後のCSRFトークン更新、後続リクエストへのCookieと `X-CSRFToken` の送信も確認する。
+4. CSRF取得・ログイン成功は200、登録成功は201、ログアウト成功は204、ログアウト後のユーザー取得は403、重複登録は400となり、APIのJSONがHTMLに置き換わらないことを確認する。`Content-Type`、`Set-Cookie`、`Vary` などの必要なレスポンスヘッダーが転送後も保持されることと、ログアウトで `sessionid` が削除されることも確認する。
+5. `/login` や `/expenses` の直接アクセス・再読み込みがSPAとして表示されることを確認する。
+
+プライベートウィンドウをすべて閉じた後のCookie削除はブラウザの仕様です。認証維持は同じプライベートセッション内の再読み込みで確認します。自動テストはDjangoのCSRF・Cookie設定とAPIクライアントの通信設定を検証しますが、Vercel経由のヘッダー・Cookie転送と各ブラウザの実機確認は別途必要です。
+
+この同一オリジン化はIssue #41で追跡します（#45のSafari条件を統合済み）。Cookieを読めない場合のCSRF永続キャッシュ廃止は別のIssue #39、パスワード案内は #42で扱います。同一オリジン化の確認だけで、それらの修正完了とは判断しません。
+
+本番反映後は、以下の結果をIssue #30（本番統合）へ引き継ぎ、#31（MVP最終QA）で参照できるようにします。環境変数は名前と確認結果のみ記録し、秘密値は記載しません。
+
+- VercelとRenderそれぞれに反映されたコミットSHA、反映日時、環境、PR #46との対応
+- `VITE_API_BASE_URL`、Origin設定、Cookie設定などの環境変数名と確認結果
+- Mac Safari通常／プライベート、Chrome通常／シークレット、Edge通常／InPrivateのブラウザ・OSバージョンと、登録・ログイン・再読み込み・支出一覧・ログアウトの結果
+- APIステータス・レスポンスヘッダー・Cookie属性と有効期限・SPA直接アクセスの確認結果、および未確認項目と失敗時の再現手順
 
 Render Web Service と Render PostgreSQL が同じ workspace かつ同じ region にある場合は、PostgreSQL の internal connection string を使います。
 別 region や別 workspace の internal connection string は名前解決できないため、同じ region にそろえるか、必要に応じて external connection string を使います。
