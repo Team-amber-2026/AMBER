@@ -57,6 +57,27 @@
   width: 100%;
 }
 
+.passwordHelp {
+  color: #4b5347;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.passwordHelp ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.passwordHelp p {
+  margin: 4px 0 0;
+}
+
+.passwordError {
+  margin: 0;
+  color: #812828;
+  white-space: pre-wrap;
+}
+
 .notice,
 .error {
   margin: 0 0 16px;

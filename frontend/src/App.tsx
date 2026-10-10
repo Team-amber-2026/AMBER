@@ -13,7 +13,7 @@ import ExpenseDetailPage from "./pages/ExpenseDetailPage";
 import ExpenseEditPage from "./pages/ExpenseEditPage";
 import MonthlySummaryPage from "./pages/MonthlySummaryPage";
 import type { AuthMode, LoginForm, RegisterForm, User } from "./types";
-import { readableError, readableErrorStatus } from "./utils/errors";
+import { readableError, readableErrorStatus, readableFieldError } from "./utils/errors";
 import styles from "./App.module.css";
 
 const initialLogin: LoginForm = {
@@ -34,6 +34,7 @@ export default function App() {
   const [registerForm, setRegisterForm] = useState<RegisterForm>(initialRegister);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [registerPasswordError, setRegisterPasswordError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
 
@@ -57,6 +58,7 @@ export default function App() {
 
   async function handleRegister() {
     setError("");
+    setRegisterPasswordError("");
     setMessage("");
     setIsSubmitting(true);
 
@@ -66,11 +68,17 @@ export default function App() {
       setMessage("登録が完了しました。ログインしてください。");
       return true;
     } catch (requestError) {
+      setRegisterPasswordError(readableFieldError(requestError, "password"));
       setError(readableError(requestError));
       return false;
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function handleRegisterPasswordChange(password: string) {
+    setRegisterPasswordError("");
+    setRegisterForm((current) => ({ ...current, password }));
   }
 
   async function handleLogin() {
@@ -125,9 +133,11 @@ export default function App() {
           registerForm,
           message,
           error,
+          registerPasswordError,
           isSubmitting,
           onLogin: handleLogin,
           onRegister: handleRegister,
+          onRegisterPasswordChange: handleRegisterPasswordChange,
           setLoginForm,
           setRegisterForm,
         })}
@@ -141,9 +151,11 @@ export default function App() {
           registerForm,
           message,
           error,
+          registerPasswordError,
           isSubmitting,
           onLogin: handleLogin,
           onRegister: handleRegister,
+          onRegisterPasswordChange: handleRegisterPasswordChange,
           setLoginForm,
           setRegisterForm,
         })}
@@ -227,9 +239,11 @@ type AuthRouteProps = {
   registerForm: RegisterForm;
   message: string;
   error: string;
+  registerPasswordError: string;
   isSubmitting: boolean;
   onLogin: () => Promise<boolean>;
   onRegister: () => Promise<boolean>;
+  onRegisterPasswordChange: (password: string) => void;
   setLoginForm: Dispatch<SetStateAction<LoginForm>>;
   setRegisterForm: Dispatch<SetStateAction<RegisterForm>>;
 };

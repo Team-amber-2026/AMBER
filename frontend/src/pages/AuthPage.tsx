@@ -11,9 +11,11 @@ type AuthPageProps = {
   registerForm: RegisterForm;
   message: string;
   error: string;
+  registerPasswordError: string;
   isSubmitting: boolean;
   onLogin: () => Promise<boolean>;
   onRegister: () => Promise<boolean>;
+  onRegisterPasswordChange: (password: string) => void;
   setLoginForm: Dispatch<SetStateAction<LoginForm>>;
   setRegisterForm: Dispatch<SetStateAction<RegisterForm>>;
 };
@@ -24,9 +26,11 @@ export default function AuthPage({
   registerForm,
   message,
   error,
+  registerPasswordError,
   isSubmitting,
   onLogin,
   onRegister,
+  onRegisterPasswordChange,
   setLoginForm,
   setRegisterForm,
 }: AuthPageProps) {
@@ -140,12 +144,27 @@ export default function AuthPage({
               id="register-password"
               className={styles.input}
               type="password"
+              autoComplete="new-password"
+              aria-describedby={`register-password-help${registerPasswordError ? " register-password-error" : ""}`}
+              aria-invalid={registerPasswordError ? true : undefined}
               value={registerForm.password}
-              onChange={(event) =>
-                setRegisterForm((current) => ({ ...current, password: event.target.value }))
-              }
+              onChange={(event) => onRegisterPasswordChange(event.target.value)}
               required
             />
+
+            <div id="register-password-help" className={styles.passwordHelp}>
+              <ul>
+                <li>8文字以上で入力してください。</li>
+                <li>よく使われるパスワードは使用できません。</li>
+                <li>数字だけのパスワードは使用できません。</li>
+              </ul>
+              <p>文字種や記号の制限はありません（数字のみは不可）。</p>
+            </div>
+            {registerPasswordError && (
+              <p id="register-password-error" className={styles.passwordError} role="alert">
+                {registerPasswordError}
+              </p>
+            )}
 
             <button className={styles.submitButton} type="submit" disabled={isSubmitting}>
               登録

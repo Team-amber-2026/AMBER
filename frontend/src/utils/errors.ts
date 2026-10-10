@@ -51,6 +51,20 @@ export function readableErrorStatus(error: unknown) {
   return error.response?.status;
 }
 
+export function readableFieldError(error: unknown, field: string): string {
+  if (!isAxiosErrorResponse(error)) return "";
+
+  const data = error.response?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return "";
+
+  const messages = (data as ErrorResponse)[field];
+  if (typeof messages === "string") return messages;
+  if (Array.isArray(messages)) {
+    return messages.filter((message): message is string => typeof message === "string").join("\n");
+  }
+  return "";
+}
+
 function isAxiosErrorResponse(error: unknown): error is AxiosError<unknown> {
   return axios.isAxiosError(error);
 }
