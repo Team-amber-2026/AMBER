@@ -1,6 +1,18 @@
 from rest_framework import serializers
 
-from .models import Expense
+from .models import Category, Expense
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ["id", "name"]
+        read_only_fields = ["id", "name"]
+
+
+class CategoryClassificationInputSerializer(serializers.Serializer):
+    shop_name = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    raw_ocr_text = serializers.CharField(allow_blank=True, required=False)
 
 
 class ClientOCRResultSerializer(serializers.Serializer):
@@ -10,11 +22,21 @@ class ClientOCRResultSerializer(serializers.Serializer):
     raw_ocr_text = serializers.CharField(allow_blank=True)
     confidence = serializers.FloatField(min_value=0, max_value=100)
     engine = serializers.ChoiceField(choices=["tesseract.js"])
+    category = serializers.CharField(max_length=50, required=False)
+
+    def validate_category(self, value):
+        if not Category.objects.filter(name=value).exists():
+            raise serializers.ValidationError("存在するカテゴリーを指定してください。")
+        return value
 
 
 class ExpenseSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True)
     ocr_result = ClientOCRResultSerializer(write_only=True, required=False)
+    category = serializers.SlugRelatedField(
+        slug_field="name",
+        queryset=Category.objects.all(),
+    )
 
     class Meta:
         model = Expense
@@ -39,8 +61,3 @@ class ExpenseSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         validated_data.pop("ocr_result", None)
         return super().update(instance, validated_data)
-
-    def validate_category(self, value):
-        if not value.strip():
-            raise serializers.ValidationError("カテゴリーを選択してください。")
-        return value.strip()
