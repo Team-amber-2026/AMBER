@@ -45,7 +45,7 @@ afterEach(async () => {
 
 async function renderPage() {
   await act(async () => root.render(
-    <MemoryRouter><ReceiptUploadPage onLogout={async () => {}} isSubmitting={false} /></MemoryRouter>,
+    <MemoryRouter><ReceiptUploadPage /></MemoryRouter>,
   ));
 }
 

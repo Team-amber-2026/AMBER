@@ -29,11 +29,6 @@
   color: #20231f;
 }
 
-.buttonCompact {
-  min-width: 112px;
-  padding: 0 14px;
-}
-
 .notice,
 .error {
   margin: 0 0 16px;
@@ -102,12 +97,13 @@
 
 .primaryActions {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 16px 0 22px;
 }
 
-.primaryActions button {
+.primaryActions button,
+.actionLink {
   min-height: 56px;
   padding: 0 16px;
   font-weight: 800;
@@ -134,7 +130,7 @@
 
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -153,15 +149,14 @@
   margin-bottom: 14px;
 }
 
-.sectionHeading h2,
-.profileBlock h2 {
+.sectionHeading h2 {
   margin: 0;
   font-size: 20px;
 }
 
 .textButton {
-  min-height: auto;
-  padding: 0;
+  min-height: 44px;
+  padding: 0 8px;
   background: transparent;
   color: #25634d;
   font-weight: 800;
@@ -186,6 +181,7 @@
 }
 
 .expenseItem div {
+  min-width: 0;
   display: grid;
   gap: 4px;
 }
@@ -211,23 +207,6 @@
   color: #697066;
 }
 
-.definitionList {
-  display: grid;
-  grid-template-columns: 110px 1fr;
-  gap: 10px;
-  margin: 16px 0 0;
-}
-
-.definitionList dt {
-  font-weight: 700;
-}
-
-.definitionList dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 @media (max-width: 720px) {
   .shell {
     width: min(100% - 24px, 480px);
@@ -237,10 +216,6 @@
   .header {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .buttonCompact {
-    width: 100%;
   }
 
   .summaryPanel,
@@ -264,8 +239,22 @@
     border-radius: 8px;
   }
 
+  .expenseItem {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .sectionHeading {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+.actionLink {
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfd5c9;
+  border-radius: 6px;
+  background: #fff;
+  text-decoration: none;
 }

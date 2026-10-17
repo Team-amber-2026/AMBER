@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 
 import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./api/auth";
 import AuthPage from "./pages/AuthPage";
-import ComingSoonPage from "./pages/ComingSoonPage";
+import TopPage from "./pages/TopPage";
+import MyPage from "./pages/MyPage";
 import HomePage from "./pages/HomePage";
 import ReceiptCompletePage from "./pages/ReceiptCompletePage";
 import ReceiptUploadPage from "./pages/ReceiptUploadPage";
@@ -36,6 +37,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
+  const logoutInFlight = useRef(false);
 
   useEffect(() => {
     async function initializeAuth() {
@@ -93,6 +95,8 @@ export default function App() {
   }
 
   async function handleLogout() {
+    if (logoutInFlight.current) return;
+    logoutInFlight.current = true;
     setError("");
     setMessage("");
     setIsSubmitting(true);
@@ -100,11 +104,14 @@ export default function App() {
     try {
       await logoutUser();
       setUser(null);
+      setLoginForm(initialLogin);
+      setRegisterForm(initialRegister);
       setMessage("ログアウトしました。");
       navigate("/login", { replace: true });
     } catch (requestError) {
       setError(readableError(requestError));
     } finally {
+      logoutInFlight.current = false;
       setIsSubmitting(false);
     }
   }
@@ -115,7 +122,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to={user ? "/home" : "/login"} replace />} />
+      <Route path="/" element={user ? <Navigate to="/home" replace /> : <TopPage error={error} />} />
       <Route
         path="/login"
         element={renderAuthRoute({
@@ -156,8 +163,6 @@ export default function App() {
               user={user}
               message={message}
               error={error}
-              isSubmitting={isSubmitting}
-              onLogout={handleLogout}
             />
           ) : (
             <Navigate to="/login" replace />
@@ -168,10 +173,7 @@ export default function App() {
         path="/receipts/new"
         element={
           <ProtectedRoute user={user}>
-            <ReceiptUploadPage
-              onLogout={handleLogout}
-              isSubmitting={isSubmitting}
-            />
+            <ReceiptUploadPage />
           </ProtectedRoute>
         }
       />
@@ -179,7 +181,7 @@ export default function App() {
         path="/expenses"
         element={
           <ProtectedRoute user={user}>
-            <ExpenseListPage onLogout={handleLogout} isSubmitting={isSubmitting} />
+            <ExpenseListPage />
           </ProtectedRoute>
         }
       />
@@ -187,7 +189,7 @@ export default function App() {
         path="/summary"
         element={
           <ProtectedRoute user={user}>
-            <MonthlySummaryPage onLogout={handleLogout} isSubmitting={isSubmitting} />
+            <MonthlySummaryPage />
           </ProtectedRoute>
         }
       />
@@ -195,7 +197,7 @@ export default function App() {
         path="/expenses/:expenseId/edit"
         element={
           <ProtectedRoute user={user}>
-            <ExpenseEditPage onLogout={handleLogout} isSubmitting={isSubmitting} />
+            <ExpenseEditPage />
           </ProtectedRoute>
         }
       />
@@ -203,7 +205,7 @@ export default function App() {
         path="/expenses/:expenseId"
         element={
           <ProtectedRoute user={user}>
-            <ExpenseDetailPage onLogout={handleLogout} isSubmitting={isSubmitting} />
+            <ExpenseDetailPage />
           </ProtectedRoute>
         }
       />
@@ -211,11 +213,21 @@ export default function App() {
         path="/receipts/complete"
         element={
           <ProtectedRoute user={user}>
-            <ReceiptCompletePage onLogout={handleLogout} isSubmitting={isSubmitting} />
+            <ReceiptCompletePage />
           </ProtectedRoute>
         }
       />
-      <Route path="*" element={<Navigate to={user ? "/home" : "/login"} replace />} />
+      <Route
+        path="/mypage"
+        element={
+          user ? (
+            <MyPage user={user} error={error} isSubmitting={isSubmitting} onLogout={handleLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      <Route path="*" element={<Navigate to={user ? "/home" : "/"} replace />} />
     </Routes>
   );
 }

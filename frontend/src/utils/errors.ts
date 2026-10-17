@@ -6,8 +6,11 @@ type ErrorResponse = {
 };
 
 export function readableError(error: unknown) {
+  if (axios.isAxiosError(error) && error.code === "ERR_BAD_RESPONSE" && !error.response) {
+    return "サーバーから正しいデータを取得できませんでした。時間をおいて再度お試しください。";
+  }
   if (!isAxiosErrorResponse(error)) {
-    return "通信に失敗しました。Djangoサーバーが起動しているか確認してください。";
+    return "通信に失敗しました。通信環境を確認して、もう一度お試しください。";
   }
 
   const data = error.response?.data;
@@ -16,14 +19,14 @@ export function readableError(error: unknown) {
     if (message.startsWith("<!DOCTYPE html") || message.startsWith("<html")) {
       const status = error.response?.status;
       return status
-        ? `サーバーでエラーが発生しました（${status}）。バックエンドのログを確認してください。`
-        : "サーバーでエラーが発生しました。バックエンドのログを確認してください。";
+        ? `サーバーでエラーが発生しました（${status}）。時間をおいて再度お試しください。`
+        : "サーバーでエラーが発生しました。時間をおいて再度お試しください。";
     }
-    return message || "通信に失敗しました。Djangoサーバーが起動しているか確認してください。";
+    return message || "通信に失敗しました。通信環境を確認して、もう一度お試しください。";
   }
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return "通信に失敗しました。Djangoサーバーが起動しているか確認してください。";
+    return "通信に失敗しました。通信環境を確認して、もう一度お試しください。";
   }
 
   const errorResponse = data as ErrorResponse;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchCategories, fetchExpenseDetail, updateExpense } from "../api/expenses";
@@ -8,7 +8,6 @@ import type { Category, ExpenseSavePayload, SavedExpense } from "../types";
 import { readableError } from "../utils/errors";
 import styles from "./ExpenseEditPage.module.css";
 
-const maxImageSize = 10 * 1024 * 1024;
 const initialForm: ExpenseSavePayload = {
   shop_name: "",
   purchased_at: "",
@@ -17,19 +16,12 @@ const initialForm: ExpenseSavePayload = {
   raw_ocr_text: "",
 };
 
-type ExpenseEditPageProps = {
-  onLogout: () => Promise<void>;
-  isSubmitting: boolean;
-};
-
-export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditPageProps) {
+export default function ExpenseEditPage() {
   const navigate = useNavigate();
   const { expenseId } = useParams();
   const [expense, setExpense] = useState<SavedExpense | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState<ExpenseSavePayload>(initialForm);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -64,37 +56,6 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
     void loadExpense();
   }, [expenseId]);
 
-  useEffect(() => {
-    if (!selectedImage) {
-      setPreviewUrl("");
-      return;
-    }
-
-    const objectUrl = URL.createObjectURL(selectedImage);
-    setPreviewUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [selectedImage]);
-
-  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const image = event.target.files?.[0] ?? null;
-    setError("");
-    if (!image) {
-      setSelectedImage(null);
-      return;
-    }
-    if (!image.type.startsWith("image/")) {
-      event.target.value = "";
-      setError("画像ファイルを選択してください。");
-      return;
-    }
-    if (image.size > maxImageSize) {
-      event.target.value = "";
-      setError("画像サイズは10MB以下にしてください。");
-      return;
-    }
-    setSelectedImage(image);
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const validationError = validateExpenseForm(form);
@@ -106,7 +67,7 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
     setSaving(true);
     setError("");
     try {
-      const updated = await updateExpense(expense.id, form, selectedImage);
+      const updated = await updateExpense(expense.id, form);
       navigate(`/expenses/${updated.id}`, {
         replace: true,
         state: { toast: "支出を更新しました。" },
@@ -118,9 +79,7 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
     }
   }
 
-  const isBusy = isSubmitting || saving;
-  const displayedImage = previewUrl || expense?.image;
-
+  const isBusy = saving;
   return (
     <main className={styles.shell}>
       <header className={styles.header}>
@@ -128,9 +87,6 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
           <p className={styles.eyebrow}>支出編集</p>
           <h1>{expense?.shop_name || "支出を編集"}</h1>
         </div>
-        <button type="button" className={styles.secondaryButton} onClick={onLogout} disabled={isBusy}>
-          ログアウト
-        </button>
       </header>
 
       {error ? <p className={styles.error}>{error}</p> : null}
@@ -187,20 +143,6 @@ export default function ExpenseEditPage({ onLogout, isSubmitting }: ExpenseEditP
               />
             </label>
           </div>
-
-          <section className={styles.imageSection} aria-labelledby="receipt-image-title">
-            <div>
-              <h2 id="receipt-image-title">レシート画像</h2>
-              <label className={styles.fileButton}>
-                画像を選択
-                <input type="file" accept="image/*" onChange={handleImageChange} />
-              </label>
-              <p>{selectedImage ? selectedImage.name : "新しい画像を選ばない場合は現在の画像を維持します。"}</p>
-            </div>
-            <div className={styles.preview}>
-              {displayedImage ? <img src={displayedImage} alt="レシート画像のプレビュー" /> : <span>画像なし</span>}
-            </div>
-          </section>
 
           <div className={styles.actions}>
             <button type="submit" className={styles.saveButton} disabled={isBusy}>
