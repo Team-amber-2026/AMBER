@@ -74,6 +74,8 @@ beforeEach(() => {
   vi.mocked(auth.loginUser).mockResolvedValue(user);
   vi.mocked(auth.registerUser).mockResolvedValue(user);
   vi.mocked(auth.logoutUser).mockResolvedValue(undefined);
+  vi.mocked(expenses.fetchCategories).mockResolvedValue([{ id: 1, name: "食費" }, { id: 4, name: "その他" }]);
+  vi.mocked(expenses.classifyCategory).mockResolvedValue({ id: 1, name: "食費" });
   vi.mocked(expenses.fetchExpenses).mockResolvedValue([expense]);
   vi.mocked(expenses.fetchExpenseDetail).mockResolvedValue(expense);
   vi.mocked(expenses.fetchMonthlySummary).mockResolvedValue({

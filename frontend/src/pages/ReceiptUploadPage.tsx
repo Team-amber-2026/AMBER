@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, PointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { saveExpense } from "../api/expenses";
+import { classifyCategory, fetchCategories, saveExpense } from "../api/expenses";
+import CategorySelect from "../components/CategorySelect";
 import { runReceiptOcr, toClientOCRResult } from "../ocr/receiptOcr";
 import type { ReceiptImageCrop } from "../ocr/receiptOcr";
-import type { ExpenseSavePayload, ReceiptOCRResult } from "../types";
+import type { Category, ExpenseSavePayload, ReceiptOCRResult } from "../types";
 import { readableError } from "../utils/errors";
 import styles from "./ReceiptUploadPage.module.css";
 
@@ -13,7 +14,6 @@ const maxImageSize = 10 * 1024 * 1024;
 const lowConfidenceThreshold = 70;
 const fullImageCrop: ReceiptImageCrop = { x: 0, y: 0, width: 1, height: 1 };
 const minimumCropSize = 0.025;
-const categories = ["食費", "日用品", "交通費", "医療費", "娯楽", "その他"];
 const initialConfirmForm: ExpenseSavePayload = {
   shop_name: "",
   purchased_at: "",
@@ -38,6 +38,10 @@ export default function ReceiptUploadPage() {
   const [crop, setCrop] = useState<ReceiptImageCrop>(fullImageCrop);
   const [previewUrl, setPreviewUrl] = useState("");
   const [result, setResult] = useState<ReceiptOCRResult | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [automaticCategory, setAutomaticCategory] = useState("その他");
+  const [categoryError, setCategoryError] = useState("");
+  const [classificationError, setClassificationError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -45,6 +49,25 @@ export default function ReceiptUploadPage() {
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
   const [confirmForm, setConfirmForm] = useState<ExpenseSavePayload>(initialConfirmForm);
+
+  useEffect(() => {
+    let active = true;
+    fetchCategories()
+      .then((categoryList) => {
+        if (active) {
+          setCategories(categoryList);
+          setCategoryError("");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCategoryError("カテゴリー一覧を取得できませんでした。ページを再読み込みしてください。");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -106,6 +129,7 @@ export default function ReceiptUploadPage() {
     const controller = new AbortController();
     analysisControllerRef.current = controller;
     setIsAnalyzing(true);
+    setClassificationError("");
     setError("");
     setMessage("");
     setResult(null);
@@ -129,12 +153,29 @@ export default function ReceiptUploadPage() {
         return;
       }
 
+      let classifiedCategory = "その他";
+      let classificationWarning = "";
+      try {
+        const category = await classifyCategory(
+          analyzedResult.shop_name ?? "",
+          analyzedResult.raw_ocr_text,
+        );
+        classifiedCategory = category.name;
+      } catch {
+        classificationWarning = "自動分類に失敗したため「その他」を設定しました。手動で変更できます。";
+      }
+      if (generation !== analysisGenerationRef.current) {
+        return;
+      }
+
+      setClassificationError(classificationWarning);
       setResult(analyzedResult);
+      setAutomaticCategory(classifiedCategory);
       setConfirmForm({
         shop_name: analyzedResult.shop_name ?? "",
         purchased_at: analyzedResult.purchased_at ?? "",
         total_amount: analyzedResult.total_amount ?? 0,
-        category: "その他",
+        category: classifiedCategory,
         raw_ocr_text: analyzedResult.raw_ocr_text,
       });
       setOcrProgress(1);
@@ -171,7 +212,10 @@ export default function ReceiptUploadPage() {
 
     try {
       const payload = result
-        ? { ...confirmForm, ocr_result: toClientOCRResult(result) }
+        ? {
+            ...confirmForm,
+            ocr_result: { ...toClientOCRResult(result), category: automaticCategory },
+          }
         : confirmForm;
       const savedExpense = await saveExpense(payload);
       navigate("/receipts/complete", { replace: true, state: { expense: savedExpense } });
@@ -185,6 +229,8 @@ export default function ReceiptUploadPage() {
   function resetAnalysis() {
     setIsAnalyzing(false);
     setResult(null);
+    setAutomaticCategory("その他");
+    setClassificationError("");
     setConfirmForm(initialConfirmForm);
     setOcrProgress(0);
     setOcrStatus("");
@@ -283,6 +329,8 @@ export default function ReceiptUploadPage() {
 
       {message && <p className={styles.notice}>{message}</p>}
       {error && <p className={styles.error}>{error}</p>}
+      {categoryError && <p className={styles.error}>{categoryError}</p>}
+      {classificationError && <p className={styles.error}>{classificationError}</p>}
       {result && Object.values(result.field_confidence).some((confidence) => confidence < lowConfidenceThreshold) && (
         <p className={styles.warning}>
           読み取り信頼度が低い項目があります。各項目をレシート画像と照合してください。
@@ -491,18 +539,13 @@ export default function ReceiptUploadPage() {
 
             <label>
               カテゴリー
-              <select
+              <CategorySelect
+                categories={categories}
                 value={confirmForm.category}
-                onChange={(event) =>
-                  setConfirmForm((current) => ({ ...current, category: event.target.value }))
+                onChange={(category) =>
+                  setConfirmForm((current) => ({ ...current, category }))
                 }
-              >
-                {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
 
             <label className={styles.fullWidth}>

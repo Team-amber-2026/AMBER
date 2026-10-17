@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TransactionTestCase
 
-from expenses.models import Expense
+from expenses.models import Category, Expense
 
 
 legacy_history_migration = import_module(
@@ -22,6 +22,7 @@ User = get_user_model()
 
 class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
     def setUp(self):
+        self.category, _ = Category.objects.get_or_create(name="その他")
         self._drop_legacy_test_tables()
         self.addCleanup(self._drop_legacy_test_tables)
 
@@ -44,14 +45,14 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
             shop_name="Migrated receipt",
             purchased_at="2026-10-03",
             total_amount=100,
-            category="その他",
+            category=self.category,
         )
         new_expense = Expense.objects.create(
             user=user,
             shop_name="New receipt",
             purchased_at="2026-10-03",
             total_amount=200,
-            category="その他",
+            category=self.category,
         )
         history_model = apps.get_model("receipts", "OCRCorrectionHistory")
         archive_table = "receipts_ocrcorrectionhistory_legacy_job_schema"
@@ -119,7 +120,7 @@ class LegacyHistoryArchiveMigrationTests(TransactionTestCase):
             shop_name="Archive test",
             purchased_at="2026-10-03",
             total_amount=100,
-            category="その他",
+            category=self.category,
         )
 
         json_type = connection.data_types["JSONField"]
