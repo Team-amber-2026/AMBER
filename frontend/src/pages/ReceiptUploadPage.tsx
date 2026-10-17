@@ -35,6 +35,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
   const [categories, setCategories] = useState<Category[]>([]);
   const [automaticCategory, setAutomaticCategory] = useState("その他");
   const [categoryError, setCategoryError] = useState("");
+  const [classificationError, setClassificationError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -121,6 +122,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
     const controller = new AbortController();
     analysisControllerRef.current = controller;
     setIsAnalyzing(true);
+    setClassificationError("");
     setError("");
     setMessage("");
     setResult(null);
@@ -144,6 +146,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
       }
 
       let classifiedCategory = "その他";
+      let classificationWarning = "";
       try {
         const category = await classifyCategory(
           analyzedResult.shop_name ?? "",
@@ -151,12 +154,13 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
         );
         classifiedCategory = category.name;
       } catch {
-        setCategoryError("自動分類に失敗したため「その他」を設定しました。手動で変更できます。");
+        classificationWarning = "自動分類に失敗したため「その他」を設定しました。手動で変更できます。";
       }
       if (generation !== analysisGenerationRef.current) {
         return;
       }
 
+      setClassificationError(classificationWarning);
       setResult(analyzedResult);
       setAutomaticCategory(classifiedCategory);
       setConfirmForm({
@@ -221,6 +225,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
     setIsAnalyzing(false);
     setResult(null);
     setAutomaticCategory("その他");
+    setClassificationError("");
     setConfirmForm(initialConfirmForm);
     setOcrProgress(0);
     setOcrStatus("");
@@ -267,6 +272,7 @@ export default function ReceiptUploadPage({ onLogout, isSubmitting }: ReceiptUpl
       {message && <p className={styles.notice}>{message}</p>}
       {error && <p className={styles.error}>{error}</p>}
       {categoryError && <p className={styles.error}>{categoryError}</p>}
+      {classificationError && <p className={styles.error}>{classificationError}</p>}
       {result && result.confidence < lowConfidenceThreshold && (
         <p className={styles.warning}>
           OCRの信頼度が低いため、店名・購入日・合計金額をレシート画像と照合してください。

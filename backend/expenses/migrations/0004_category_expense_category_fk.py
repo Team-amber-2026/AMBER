@@ -28,6 +28,16 @@ def seed_categories_and_migrate_expenses(apps, schema_editor):
         expense.save(update_fields=["category_ref"])
 
 
+def restore_expense_category_names(apps, schema_editor):
+    Expense = apps.get_model("expenses", "Expense")
+    db_alias = schema_editor.connection.alias
+    # On reversal, category is the recreated string column and category_ref
+    # still holds the relation. Copy names before Django removes that relation.
+    for expense in Expense.objects.using(db_alias).select_related("category_ref").iterator():
+        expense.category = expense.category_ref.name
+        expense.save(using=db_alias, update_fields=["category"])
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("expenses", "0003_expense_image_format"),
@@ -61,7 +71,14 @@ class Migration(migrations.Migration):
                 to="expenses.category",
             ),
         ),
-        migrations.RunPython(seed_categories_and_migrate_expenses, migrations.RunPython.noop),
+        # Reversal recreates this column before restoring its contents. Allow
+        # NULL until the reverse data migration has copied the category names.
+        migrations.AlterField(
+            model_name="expense",
+            name="category",
+            field=models.CharField(max_length=50, null=True),
+        ),
+        migrations.RunPython(seed_categories_and_migrate_expenses, restore_expense_category_names),
         migrations.RemoveField(
             model_name="expense",
             name="category",
