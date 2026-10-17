@@ -299,6 +299,8 @@ export default function ReceiptUploadPage() {
     cropDragRef.current = null;
     if (!nextCrop || nextCrop.width < minimumCropSize || nextCrop.height < minimumCropSize) {
       setCrop(previousCrop);
+    } else if (!areCropsEqual(previousCrop, nextCrop)) {
+      resetAnalysis();
     }
   }
 
@@ -308,6 +310,13 @@ export default function ReceiptUploadPage() {
     if (previousCrop) {
       setCrop(previousCrop);
     }
+  }
+
+  function resetCropSelection() {
+    if (!areCropsEqual(crop, fullImageCrop)) {
+      resetAnalysis();
+    }
+    setCrop(fullImageCrop);
   }
 
   const hasSelection = selectedFile !== null;
@@ -384,7 +393,7 @@ export default function ReceiptUploadPage() {
                 type="button"
                 className={styles.resetCropButton}
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => setCrop(fullImageCrop)}
+                onClick={resetCropSelection}
                 disabled={isBusy}
               >
                 全体を選択
@@ -573,6 +582,11 @@ export default function ReceiptUploadPage() {
       )}
     </main>
   );
+}
+
+function areCropsEqual(left: ReceiptImageCrop, right: ReceiptImageCrop) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height;
 }
 
 function validateConfirmForm(form: ExpenseSavePayload) {

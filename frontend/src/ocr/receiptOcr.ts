@@ -50,6 +50,10 @@ function findTotalKeyword(line: string) {
   return null;
 }
 
+function isExactTotalKeyword(keyword: { text: string }) {
+  return keyword.text.replace(/\s/g, "") === "合計";
+}
+
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker(["jpn", "eng"], OEM.LSTM_ONLY, {
@@ -443,10 +447,7 @@ export function extractShopName(lines: OCRLine[]) {
     const hasDistinctiveSize =
       line.height !== undefined &&
       (baselineHeight === 0 || line.height >= Math.max(baselineHeight * 1.3, 18));
-    if (!hasShopCharacter && !hasDistinctiveSize && baselineHeight > 0) {
-      return [];
-    }
-    return [{ ...line, text, top }];
+    return [{ ...line, text, top, hasDistinctiveSize }];
   });
 
   if (candidates.length === 0) {
@@ -455,6 +456,7 @@ export function extractShopName(lines: OCRLine[]) {
 
   const selected = candidates.sort((candidateA, candidateB) =>
     Number(candidateB.text.includes("店")) - Number(candidateA.text.includes("店")) ||
+    Number(candidateB.hasDistinctiveSize) - Number(candidateA.hasDistinctiveSize) ||
     (candidateB.height ?? 0) - (candidateA.height ?? 0) ||
     candidateA.top - candidateB.top ||
     candidateB.confidence - candidateA.confidence,
@@ -541,9 +543,10 @@ function getTotalAmountCandidate(
   rawText: string,
   pageConfidence: number,
 ): FieldCandidate<number> | null {
-  const candidates: FieldCandidate<number>[] = [];
+  const candidates: Array<FieldCandidate<number> & { keywordPriority: number }> = [];
   for (const [index, line] of lines.entries()) {
-    if (findTotalKeyword(line.text)) {
+    const keyword = findTotalKeyword(line.text);
+    if (keyword) {
       const followingLine = lines[index + 1];
       const relatedLines = followingLine ? [line, followingLine] : [line];
       const value = extractTotalAmount(relatedLines.map(({ text }) => text).join("\n"));
@@ -551,19 +554,21 @@ function getTotalAmountCandidate(
         candidates.push({
           value,
           confidence: averageConfidence(relatedLines),
+          keywordPriority: isExactTotalKeyword(keyword) ? 1 : 0,
         });
       }
     }
     if (/(?:%|％)\s*(?:対象|対|TH|T\s*H)/i.test(line.text)) {
       const value = extractTotalAmount(line.text);
       if (value !== null) {
-        candidates.push({ value, confidence: line.confidence });
+        candidates.push({ value, confidence: line.confidence, keywordPriority: 0 });
       }
     }
   }
 
   if (candidates.length > 0) {
     return candidates.sort((candidateA, candidateB) =>
+      candidateB.keywordPriority - candidateA.keywordPriority ||
       candidateB.confidence - candidateA.confidence,
     )[0];
   }
@@ -620,23 +625,25 @@ export function extractPurchasedAt(rawText: string) {
 export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map(normalizeOCRText);
 
-  for (const [index, line] of lines.entries()) {
-    const keywordMatch = findTotalKeyword(line);
-    if (!keywordMatch) {
-      continue;
-    }
+  for (const exactMatchOnly of [true, false]) {
+    for (const [index, line] of lines.entries()) {
+      const keywordMatch = findTotalKeyword(line);
+      if (!keywordMatch || isExactTotalKeyword(keywordMatch) !== exactMatchOnly) {
+        continue;
+      }
 
-    const afterKeyword = line.slice(keywordMatch.index + keywordMatch.text.length);
-    const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
-    if (sameLineAmount !== null) {
-      return sameLineAmount;
-    }
+      const afterKeyword = line.slice(keywordMatch.index + keywordMatch.text.length);
+      const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
+      if (sameLineAmount !== null) {
+        return sameLineAmount;
+      }
 
-    const nextLine = lines[index + 1];
-    if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine)) {
-      const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
-      if (nextLineAmount !== null) {
-        return nextLineAmount;
+      const nextLine = lines[index + 1];
+      if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine)) {
+        const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
+        if (nextLineAmount !== null) {
+          return nextLineAmount;
+        }
       }
     }
   }

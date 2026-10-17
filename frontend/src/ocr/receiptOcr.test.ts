@@ -41,6 +41,15 @@ describe("receipt OCR field extraction", () => {
     ).toBe("アンバーマート");
   });
 
+  it("extracts a shop name when other header lines have the same height", () => {
+    expect(
+      extractShopName([
+        { text: "FamilyMart", confidence: 90, top: 0.08, height: 24 },
+        { text: "Seasonal Fair", confidence: 99, top: 0.2, height: 24 },
+      ]),
+    ).toBe("FamilyMart");
+  });
+
   it.each([
     "毎度ありがとうございます",
     "単行本",
@@ -101,6 +110,10 @@ describe("receipt OCR field extraction", () => {
 
   it("prefers 合計 over 商品合計", () => {
     expect(extractTotalAmount("商品合計 ¥1,000\n合計 ¥1,100")).toBe(1100);
+  });
+
+  it("prefers the literal 合計 label over other total labels", () => {
+    expect(extractTotalAmount("総額 ¥1,000\n合計 ¥1,100")).toBe(1100);
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
