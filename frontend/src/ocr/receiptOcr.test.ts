@@ -5,6 +5,8 @@ import {
   extractPurchasedAt,
   extractShopName,
   extractTotalAmount,
+  isLikelyInvertedTextRegion,
+  toClientOCRResult,
 } from "./receiptOcr";
 
 describe("receipt OCR field extraction", () => {
@@ -15,6 +17,10 @@ describe("receipt OCR field extraction", () => {
         { text: "京都府京都市下京区五条通", confidence: 98 },
       ]),
     ).toBe("FamilyMart");
+  });
+
+  it("ignores equals signs inside a shop name", () => {
+    expect(extractShopName([{ text: "Family=Mart", confidence: 91 }])).toBe("FamilyMart");
   });
 
   it("prefers a faint shop name in the receipt header over high-confidence footer text", () => {
@@ -55,6 +61,10 @@ describe("receipt OCR field extraction", () => {
 
   it("extracts a spaced Japanese receipt date", () => {
     expect(extractPurchasedAt("2026年 6月12日 (金) 9:10")).toBe("2026-06-12");
+  });
+
+  it("ignores equals signs inserted into a total label", () => {
+    expect(extractTotalAmount("合=計 ¥1,280")).toBe(1280);
   });
 
   it("uses a repeated tax-inclusive amount when the total label is unreadable", () => {
@@ -132,5 +142,31 @@ describe("receipt OCR image sizing", () => {
       width: 1200,
       height: 900,
     });
+  });
+});
+
+describe("inverted text detection", () => {
+  it("identifies bright text on a predominantly dark background", () => {
+    expect(isLikelyInvertedTextRegion(0.78, 0.18)).toBe(true);
+  });
+
+  it("keeps ordinary dark text on a light background", () => {
+    expect(isLikelyInvertedTextRegion(0.16, 0.76)).toBe(false);
+  });
+});
+
+describe("receipt OCR client result", () => {
+  it("does not include field confidence in the saved OCR payload", () => {
+    const clientResult = toClientOCRResult({
+      shop_name: "テスト店",
+      purchased_at: "2026-06-12",
+      total_amount: 1200,
+      raw_ocr_text: "合計 1200円",
+      confidence: 90,
+      field_confidence: { shop_name: 85, purchased_at: 95, total_amount: 90 },
+      engine: "tesseract.js",
+    });
+
+    expect(clientResult).not.toHaveProperty("field_confidence");
   });
 });

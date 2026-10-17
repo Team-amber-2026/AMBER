@@ -123,6 +123,18 @@
   font-weight: 700;
 }
 
+.fieldWarning {
+  color: #8a3d2b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fieldConfidence {
+  color: #486456;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .dropIcon {
   display: inline-grid;
   place-items: center;

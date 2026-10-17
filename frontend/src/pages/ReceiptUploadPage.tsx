@@ -283,9 +283,9 @@ export default function ReceiptUploadPage() {
 
       {message && <p className={styles.notice}>{message}</p>}
       {error && <p className={styles.error}>{error}</p>}
-      {result && result.confidence < lowConfidenceThreshold && (
+      {result && Object.values(result.field_confidence).some((confidence) => confidence < lowConfidenceThreshold) && (
         <p className={styles.warning}>
-          OCRの信頼度が低いため、店名・購入日・合計金額をレシート画像と照合してください。
+          読み取り信頼度が低い項目があります。各項目をレシート画像と照合してください。
         </p>
       )}
 
@@ -393,7 +393,7 @@ export default function ReceiptUploadPage() {
               <h2 id="receipt-result-title">支出として保存</h2>
             </div>
             <span>
-              {selectedFile?.name ?? "-"}・信頼度 {Math.round(result.confidence)}%
+              {selectedFile?.name ?? "-"}
             </span>
           </div>
 
@@ -402,29 +402,64 @@ export default function ReceiptUploadPage() {
               店名
               <input
                 type="text"
+                aria-label="店名"
                 value={confirmForm.shop_name}
                 onChange={(event) =>
                   setConfirmForm((current) => ({ ...current, shop_name: event.target.value }))
                 }
                 placeholder="店名を入力"
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.shop_name)}>
+                OCR信頼度 {Math.round(result.field_confidence.shop_name)}%
+              </small>
+              {getFieldReviewMessage(
+                result.shop_name,
+                result.field_confidence.shop_name,
+                "店名",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.shop_name,
+                    result.field_confidence.shop_name,
+                    "店名",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
               購入日
               <input
                 type="date"
+                aria-label="購入日"
                 value={confirmForm.purchased_at}
                 onChange={(event) =>
                   setConfirmForm((current) => ({ ...current, purchased_at: event.target.value }))
                 }
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.purchased_at)}>
+                OCR信頼度 {Math.round(result.field_confidence.purchased_at)}%
+              </small>
+              {getFieldReviewMessage(
+                result.purchased_at,
+                result.field_confidence.purchased_at,
+                "購入日",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.purchased_at,
+                    result.field_confidence.purchased_at,
+                    "購入日",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
               合計金額
               <input
                 type="number"
+                aria-label="合計金額"
                 min="1"
                 inputMode="numeric"
                 value={confirmForm.total_amount || ""}
@@ -436,6 +471,22 @@ export default function ReceiptUploadPage() {
                 }
                 placeholder="0"
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.total_amount)}>
+                OCR信頼度 {Math.round(result.field_confidence.total_amount)}%
+              </small>
+              {getFieldReviewMessage(
+                result.total_amount,
+                result.field_confidence.total_amount,
+                "合計金額",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.total_amount,
+                    result.field_confidence.total_amount,
+                    "合計金額",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
@@ -495,6 +546,24 @@ function validateConfirmForm(form: ExpenseSavePayload) {
   }
 
   return "";
+}
+
+function getFieldReviewMessage(
+  value: string | number | null,
+  confidence: number,
+  fieldName: string,
+) {
+  if (value === null || value === "") {
+    return `${fieldName}を読み取れませんでした。画像を確認して入力してください。`;
+  }
+  if (confidence < lowConfidenceThreshold) {
+    return `${fieldName}の読み取りに不確実さがあります。画像で確認してください。`;
+  }
+  return "";
+}
+
+function getFieldConfidenceClass(confidence: number) {
+  return confidence < lowConfidenceThreshold ? styles.fieldWarning : styles.fieldConfidence;
 }
 
 function toJapaneseOcrStatus(status: string) {

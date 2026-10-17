@@ -195,27 +195,91 @@ async function runReceiptOcrExclusive(
     const originalText = originalResult.data.text.trim();
     const enhancedText = enhancedResult?.data.text.trim() ?? "";
     const headerText = headerResult?.data.text.trim() ?? "";
-    const extractionText = [enhancedText, originalText].filter(Boolean).join("\n");
-    const originalLines = extractLines(originalResult.data, originalText, preparedImage.height);
+    const originalLines = extractLines(
+      originalResult.data,
+      originalText,
+      preparedImage.height,
+      preparedImage.width,
+    );
     const enhancedLines = enhancedResult
-      ? extractLines(enhancedResult.data, enhancedText, preparedImage.height)
+      ? extractLines(
+          enhancedResult.data,
+          enhancedText,
+          preparedImage.height,
+          preparedImage.width,
+        )
       : [];
     const headerLines = headerResult
-      ? extractLines(headerResult.data, headerText, preparedImage.height, 0, headerImage?.height ?? 0)
+      ? extractLines(
+          headerResult.data,
+          headerText,
+          preparedImage.height,
+          preparedImage.width,
+          0,
+          headerImage?.height ?? 0,
+        )
       : [];
+    const usableOriginalLines = excludeLikelyInvertedLines(originalLines, preparedImage);
+    const usableEnhancedLines = excludeLikelyInvertedLines(enhancedLines, preparedImage);
+    const usableHeaderLines = headerImage
+      ? excludeLikelyInvertedLines(headerLines, headerImage)
+      : headerLines;
     const rawText = enhancedText.length > originalText.length ? enhancedText : originalText;
     const confidence = enhancedResult
       ? (originalResult.data.confidence + enhancedResult.data.confidence) / 2
       : originalResult.data.confidence;
+    const shopName = selectFieldCandidate([
+      getShopNameCandidate(usableOriginalLines),
+      getShopNameCandidate(usableEnhancedLines),
+      getShopNameCandidate(usableHeaderLines),
+    ]);
+    const purchasedAt = selectFieldCandidate([
+      getDateCandidate(
+        usableOriginalLines,
+        usableOriginalLines.map((line) => line.text).join("\n"),
+        originalResult.data.confidence,
+      ),
+      enhancedResult
+        ? getDateCandidate(
+            usableEnhancedLines,
+            usableEnhancedLines.map((line) => line.text).join("\n"),
+            enhancedResult.data.confidence,
+          )
+        : null,
+      headerResult
+        ? getDateCandidate(
+            usableHeaderLines,
+            usableHeaderLines.map((line) => line.text).join("\n"),
+            headerResult.data.confidence,
+          )
+        : null,
+    ]);
+    const totalAmount = selectFieldCandidate([
+      getTotalAmountCandidate(
+        usableOriginalLines,
+        usableOriginalLines.map((line) => line.text).join("\n"),
+        originalResult.data.confidence,
+      ),
+      enhancedResult
+        ? getTotalAmountCandidate(
+            usableEnhancedLines,
+            usableEnhancedLines.map((line) => line.text).join("\n"),
+            enhancedResult.data.confidence,
+          )
+        : null,
+    ]);
 
     return {
-      shop_name: extractShopName([...originalLines, ...enhancedLines, ...headerLines]),
-      purchased_at: extractPurchasedAt(extractionText),
-      total_amount:
-        extractTotalAmount(enhancedText) ??
-        extractTotalAmount(originalText),
+      shop_name: shopName.value,
+      purchased_at: purchasedAt.value,
+      total_amount: totalAmount.value,
       raw_ocr_text: rawText,
       confidence,
+      field_confidence: {
+        shop_name: shopName.confidence,
+        purchased_at: purchasedAt.confidence,
+        total_amount: totalAmount.confidence,
+      },
       engine: "tesseract.js",
     };
   } finally {
@@ -246,12 +310,15 @@ export type OCRLine = {
   confidence: number;
   top?: number;
   height?: number;
+  left?: number;
+  width?: number;
 };
 
 function extractLines(
   data: Tesseract.Page,
   rawText: string,
   pageHeight: number,
+  pageWidth: number,
   yOffset = 0,
   regionHeight = pageHeight,
 ): OCRLine[] {
@@ -259,10 +326,12 @@ function extractLines(
     data.blocks?.flatMap((block) =>
       block.paragraphs.flatMap((paragraph) =>
         paragraph.lines.map((line) => ({
-          text: line.text.trim(),
+          text: normalizeOCRText(line.text),
           confidence: line.confidence,
           top: (yOffset + line.bbox.y0) / pageHeight,
           height: line.bbox.y1 - line.bbox.y0,
+          left: line.bbox.x0 / pageWidth,
+          width: (line.bbox.x1 - line.bbox.x0) / pageWidth,
         })),
       ),
     ) ?? [];
@@ -273,13 +342,53 @@ function extractLines(
 
   const rawLines = rawText
     .split(/\r?\n/)
-    .map((text) => text.trim())
+    .map(normalizeOCRText)
     .filter((line) => line.length > 0);
   return rawLines.map((line, index) => ({
     text: line,
     confidence: data.confidence,
     top: (yOffset + (index / Math.max(rawLines.length, 1)) * regionHeight) / pageHeight,
   }));
+}
+
+export function isLikelyInvertedTextRegion(darkPixelRatio: number, lightPixelRatio: number) {
+  return darkPixelRatio >= 0.6 && lightPixelRatio >= 0.04 && lightPixelRatio <= 0.4;
+}
+
+function excludeLikelyInvertedLines(lines: OCRLine[], image: HTMLCanvasElement) {
+  const context = image.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return lines;
+  }
+
+  return lines.filter((line) => {
+    if (line.left === undefined || line.width === undefined || line.top === undefined || !line.height) {
+      return true;
+    }
+
+    const left = Math.max(0, Math.floor(line.left * image.width));
+    const top = Math.max(0, Math.floor(line.top * image.height));
+    const right = Math.min(image.width, Math.ceil((line.left + line.width) * image.width));
+    const bottom = Math.min(image.height, top + Math.max(1, Math.ceil(line.height)));
+    if (right <= left || bottom <= top) {
+      return true;
+    }
+
+    const pixels = context.getImageData(left, top, right - left, bottom - top).data;
+    let darkPixels = 0;
+    let lightPixels = 0;
+    const pixelCount = pixels.length / 4;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const luminance = pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
+      if (luminance < 80) {
+        darkPixels += 1;
+      } else if (luminance > 190) {
+        lightPixels += 1;
+      }
+    }
+
+    return !isLikelyInvertedTextRegion(darkPixels / pixelCount, lightPixels / pixelCount);
+  });
 }
 
 export function extractShopName(lines: OCRLine[]) {
@@ -314,8 +423,8 @@ export function extractShopName(lines: OCRLine[]) {
     const hasShopCharacter = compactText.includes("店");
     const hasDistinctiveSize =
       line.height !== undefined &&
-      line.height >= Math.max(baselineHeight * 1.3, 18);
-    if (!hasShopCharacter && !hasDistinctiveSize) {
+      (baselineHeight === 0 || line.height >= Math.max(baselineHeight * 1.3, 18));
+    if (!hasShopCharacter && !hasDistinctiveSize && baselineHeight > 0) {
       return [];
     }
     return [{ ...line, text, top }];
@@ -334,6 +443,129 @@ export function extractShopName(lines: OCRLine[]) {
   return selected.slice(0, 255);
 }
 
+type FieldCandidate<T extends string | number> = {
+  value: T;
+  confidence: number;
+};
+
+function selectFieldCandidate<T extends string | number>(
+  candidates: Array<FieldCandidate<T> | null>,
+) {
+  const groups = new Map<string, FieldCandidate<T>[]>();
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const key = `${typeof candidate.value}:${candidate.value}`;
+    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  }
+
+  const rankedGroups = [...groups.values()].sort((groupA, groupB) =>
+    groupB.length - groupA.length ||
+    averageConfidence(groupB) - averageConfidence(groupA),
+  );
+  const selected = rankedGroups[0];
+  if (!selected) {
+    return { value: null, confidence: 0 };
+  }
+
+  const disagreementPenalty = rankedGroups.length > 1 ? 10 : 0;
+  const agreementBonus = Math.min(15, (selected.length - 1) * 10);
+  return {
+    value: selected[0].value,
+    confidence: Math.max(
+      0,
+      Math.min(100, Math.round(averageConfidence(selected) + agreementBonus - disagreementPenalty)),
+    ),
+  };
+}
+
+function averageConfidence(candidates: Array<{ confidence: number }>) {
+  return candidates.reduce((total, candidate) => total + candidate.confidence, 0) / candidates.length;
+}
+
+function getShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> | null {
+  const value = extractShopName(lines);
+  if (!value) {
+    return null;
+  }
+  const compactName = cleanShopName(value).replace(/\s+/g, "");
+  const confidence = Math.max(
+    0,
+    ...lines
+      .filter((line) => cleanShopName(line.text).replace(/\s+/g, "").startsWith(compactName))
+      .map((line) => line.confidence),
+  );
+  return { value, confidence };
+}
+
+function getDateCandidate(
+  lines: OCRLine[],
+  rawText: string,
+  pageConfidence: number,
+): FieldCandidate<string> | null {
+  const lineCandidates = lines.flatMap((line) => {
+    const value = extractPurchasedAt(line.text);
+    return value ? [{ value, confidence: line.confidence }] : [];
+  });
+  if (lineCandidates.length > 0) {
+    return lineCandidates.sort((candidateA, candidateB) =>
+      candidateB.confidence - candidateA.confidence,
+    )[0];
+  }
+  const value = extractPurchasedAt(rawText);
+  return value ? { value, confidence: pageConfidence } : null;
+}
+
+function getTotalAmountCandidate(
+  lines: OCRLine[],
+  rawText: string,
+  pageConfidence: number,
+): FieldCandidate<number> | null {
+  const candidates: FieldCandidate<number>[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (totalKeywords.test(line.text)) {
+      const followingLine = lines[index + 1];
+      const relatedLines = followingLine ? [line, followingLine] : [line];
+      const value = extractTotalAmount(relatedLines.map(({ text }) => text).join("\n"));
+      if (value !== null) {
+        candidates.push({
+          value,
+          confidence: averageConfidence(relatedLines),
+        });
+      }
+    }
+    if (/(?:%|％)\s*(?:対象|対|TH|T\s*H)/i.test(line.text)) {
+      const value = extractTotalAmount(line.text);
+      if (value !== null) {
+        candidates.push({ value, confidence: line.confidence });
+      }
+    }
+  }
+
+  if (candidates.length > 0) {
+    return candidates.sort((candidateA, candidateB) =>
+      candidateB.confidence - candidateA.confidence,
+    )[0];
+  }
+
+  const value = extractTotalAmount(rawText);
+  if (value === null) {
+    return null;
+  }
+  const amountLineConfidences = lines
+    .filter((line) => !nonTotalAmountLine.test(line.text))
+    .filter((line) => extractCurrencyAmounts(line.text).includes(value))
+    .map((line) => line.confidence);
+  return {
+    value,
+    confidence: amountLineConfidences.length > 0
+      ? amountLineConfidences.reduce((total, lineConfidence) => total + lineConfidence, 0) /
+        amountLineConfidences.length
+      : pageConfidence,
+  };
+}
+
 function median(values: number[]) {
   if (values.length === 0) {
     return 0;
@@ -346,7 +578,7 @@ function median(values: number[]) {
 }
 
 export function extractPurchasedAt(rawText: string) {
-  const match = datePattern.exec(rawText);
+  const match = datePattern.exec(normalizeOCRText(rawText));
   if (!match?.groups) {
     return null;
   }
@@ -367,7 +599,7 @@ export function extractPurchasedAt(rawText: string) {
 }
 
 export function extractTotalAmount(rawText: string) {
-  const lines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
+  const lines = rawText.split(/\r?\n/).map(normalizeOCRText);
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
@@ -403,16 +635,27 @@ export function extractTotalAmount(rawText: string) {
 }
 
 export function toClientOCRResult(result: ReceiptOCRResult): ClientOCRResult {
-  return { ...result };
+  return {
+    shop_name: result.shop_name,
+    purchased_at: result.purchased_at,
+    total_amount: result.total_amount,
+    raw_ocr_text: result.raw_ocr_text,
+    confidence: result.confidence,
+    engine: result.engine,
+  };
 }
 
 function cleanShopName(value: string) {
-  const normalized = value.normalize("NFKC").trim();
+  const normalized = normalizeOCRText(value);
   const withoutLeadingNoise = normalized.replace(
     /^[^A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ0-9]+/,
     "",
   );
   return withoutLeadingNoise.replace(/\s+/g, " ").trim();
+}
+
+function normalizeOCRText(value: string) {
+  return value.normalize("NFKC").replace(/=/g, "").trim();
 }
 
 function extractCurrencyAmounts(line: string) {

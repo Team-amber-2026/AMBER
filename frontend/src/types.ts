@@ -37,10 +37,15 @@ export type ReceiptOCRResult = {
   total_amount: number | null;
   raw_ocr_text: string;
   confidence: number;
+  field_confidence: {
+    shop_name: number;
+    purchased_at: number;
+    total_amount: number;
+  };
   engine: "tesseract.js";
 };
 
-export type ClientOCRResult = ReceiptOCRResult;
+export type ClientOCRResult = Omit<ReceiptOCRResult, "field_confidence">;
 
 export type ExpenseSavePayload = {
   shop_name: string;

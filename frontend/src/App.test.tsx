@@ -14,7 +14,7 @@ vi.mock("./api/auth");
 vi.mock("./api/expenses");
 vi.mock("./ocr/receiptOcr", () => ({
   runReceiptOcr: vi.fn(),
-  toClientOCRResult: (result: ReceiptOCRResult) => result,
+  toClientOCRResult: ({ field_confidence: _fieldConfidence, ...result }: ReceiptOCRResult) => result,
 }));
 
 // jsdom omits blob URLs and native dialog methods. Browser QA covers the real dialog.
@@ -85,7 +85,9 @@ beforeEach(() => {
   vi.mocked(expenses.deleteExpense).mockResolvedValue(undefined);
   vi.mocked(runReceiptOcr).mockResolvedValue({
     shop_name: expense.shop_name, purchased_at: expense.purchased_at, total_amount: 1200,
-    raw_ocr_text: expense.raw_ocr_text, confidence: 95, engine: "tesseract.js",
+    raw_ocr_text: expense.raw_ocr_text, confidence: 95,
+    field_confidence: { shop_name: 95, purchased_at: 95, total_amount: 95 },
+    engine: "tesseract.js",
   });
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:receipt");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
