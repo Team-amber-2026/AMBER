@@ -17,6 +17,42 @@ describe("receipt OCR field extraction", () => {
     ).toBe("FamilyMart");
   });
 
+  it("prefers a faint shop name in the receipt header over high-confidence footer text", () => {
+    expect(
+      extractShopName([
+        { text: "ありがとうございました", confidence: 99, top: 0.88 },
+        { text: "Amber Market", confidence: 61, top: 0.12 },
+      ]),
+    ).toBe("Amber Market");
+  });
+
+  it("uses the image position when OCR returns lines out of visual order", () => {
+    expect(
+      extractShopName([
+        { text: "下部の案内文字", confidence: 99, top: 0.8 },
+        { text: "アンバーマート", confidence: 72, top: 0.08 },
+      ]),
+    ).toBe("アンバーマート");
+  });
+
+  it.each([
+    "毎度ありがとうございます",
+    "単行本",
+    "領 収 書",
+    "領 収 証",
+    "レ シ ー ト",
+    "予めご了承ください",
+    "ご了承くださいませ",
+    "くださいませ",
+  ])("does not select receipt boilerplate as the shop name: %s", (boilerplate) => {
+    expect(
+      extractShopName([
+        { text: boilerplate, confidence: 99, top: 0.05 },
+        { text: "マツモト", confidence: 62, top: 0.16 },
+      ]),
+    ).toBe("マツモト");
+  });
+
   it("extracts a spaced Japanese receipt date", () => {
     expect(extractPurchasedAt("2026年 6月12日 (金) 9:10")).toBe("2026-06-12");
   });

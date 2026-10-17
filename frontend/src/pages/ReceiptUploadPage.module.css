@@ -145,12 +145,46 @@
   background: #fff;
 }
 
-.previewPanel img {
+.cropFrame {
+  position: relative;
   width: 100%;
-  height: 100%;
-  max-height: 520px;
-  object-fit: contain;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.cropFrame img {
+  display: block;
+  width: 100%;
+  height: auto;
   background: #f0f2ec;
+}
+
+.cropSelection {
+  position: absolute;
+  z-index: 1;
+  border: 2px solid #ffdc78;
+  background: rgb(255 220 120 / 8%);
+  box-shadow: 0 0 0 9999px rgb(20 27 23 / 48%);
+  pointer-events: none;
+}
+
+.resetCropButton {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  min-height: 40px;
+  border: 1px solid #d8dcd2;
+  background: #fff;
+  color: #20231f;
+  font-weight: 700;
+}
+
+.cropHint {
+  margin: 8px 0 0;
+  color: #697066;
+  font-size: 14px;
 }
 
 .emptyPreview {

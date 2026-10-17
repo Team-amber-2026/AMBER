@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, PointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { saveExpense } from "../api/expenses";
 import { runReceiptOcr, toClientOCRResult } from "../ocr/receiptOcr";
+import type { ReceiptImageCrop } from "../ocr/receiptOcr";
 import type { ExpenseSavePayload, ReceiptOCRResult } from "../types";
 import { readableError } from "../utils/errors";
 import styles from "./ReceiptUploadPage.module.css";
 
 const maxImageSize = 10 * 1024 * 1024;
 const lowConfidenceThreshold = 70;
+const fullImageCrop: ReceiptImageCrop = { x: 0, y: 0, width: 1, height: 1 };
+const minimumCropSize = 0.025;
 const categories = ["食費", "日用品", "交通費", "医療費", "娯楽", "その他"];
 const initialConfirmForm: ExpenseSavePayload = {
   shop_name: "",
@@ -25,7 +28,14 @@ export default function ReceiptUploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisGenerationRef = useRef(0);
   const analysisControllerRef = useRef<AbortController | null>(null);
+  const cropFrameRef = useRef<HTMLDivElement>(null);
+  const cropDragRef = useRef<{
+    x: number;
+    y: number;
+    previousCrop: ReceiptImageCrop;
+  } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [crop, setCrop] = useState<ReceiptImageCrop>(fullImageCrop);
   const [previewUrl, setPreviewUrl] = useState("");
   const [result, setResult] = useState<ReceiptOCRResult | null>(null);
   const [message, setMessage] = useState("");
@@ -62,6 +72,7 @@ export default function ReceiptUploadPage() {
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     resetAnalysis();
+    setCrop(fullImageCrop);
 
     if (!file) {
       setSelectedFile(null);
@@ -112,6 +123,7 @@ export default function ReceiptUploadPage() {
           setOcrProgress(progress);
         },
         controller.signal,
+        crop,
       );
       if (generation !== analysisGenerationRef.current) {
         return;
@@ -185,9 +197,70 @@ export default function ReceiptUploadPage() {
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     setSelectedFile(null);
+    setCrop(fullImageCrop);
     resetAnalysis();
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  }
+
+  function getCropPoint(clientX: number, clientY: number) {
+    const bounds = cropFrameRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width === 0 || bounds.height === 0) {
+      return null;
+    }
+    return {
+      x: Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (clientY - bounds.top) / bounds.height)),
+    };
+  }
+
+  function updateCropDrag(clientX: number, clientY: number) {
+    const start = cropDragRef.current;
+    const point = getCropPoint(clientX, clientY);
+    if (!start || !point) {
+      return null;
+    }
+    const nextCrop = {
+      x: Math.min(start.x, point.x),
+      y: Math.min(start.y, point.y),
+      width: Math.abs(point.x - start.x),
+      height: Math.abs(point.y - start.y),
+    };
+    setCrop(nextCrop);
+    return nextCrop;
+  }
+
+  function handleCropPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (isBusy) {
+      return;
+    }
+    const point = getCropPoint(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    cropDragRef.current = { ...point, previousCrop: crop };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setCrop({ ...point, width: 0, height: 0 });
+  }
+
+  function handleCropPointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (!cropDragRef.current) {
+      return;
+    }
+    const nextCrop = updateCropDrag(event.clientX, event.clientY);
+    const previousCrop = cropDragRef.current.previousCrop;
+    cropDragRef.current = null;
+    if (!nextCrop || nextCrop.width < minimumCropSize || nextCrop.height < minimumCropSize) {
+      setCrop(previousCrop);
+    }
+  }
+
+  function handleCropPointerCancel() {
+    const previousCrop = cropDragRef.current?.previousCrop;
+    cropDragRef.current = null;
+    if (previousCrop) {
+      setCrop(previousCrop);
     }
   }
 
@@ -236,7 +309,39 @@ export default function ReceiptUploadPage() {
 
         <div className={styles.previewPanel}>
           {previewUrl ? (
-            <img src={previewUrl} alt="選択したレシート画像のプレビュー" />
+            <div
+              ref={cropFrameRef}
+              className={styles.cropFrame}
+              onPointerDown={handleCropPointerDown}
+              onPointerMove={(event) => updateCropDrag(event.clientX, event.clientY)}
+              onPointerUp={handleCropPointerUp}
+              onPointerCancel={handleCropPointerCancel}
+            >
+              <img
+                src={previewUrl}
+                alt="選択したレシート画像。ドラッグして読み取り範囲を指定できます"
+                draggable={false}
+              />
+              <div
+                className={styles.cropSelection}
+                style={{
+                  left: `${crop.x * 100}%`,
+                  top: `${crop.y * 100}%`,
+                  width: `${crop.width * 100}%`,
+                  height: `${crop.height * 100}%`,
+                }}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                className={styles.resetCropButton}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setCrop(fullImageCrop)}
+                disabled={isBusy}
+              >
+                全体を選択
+              </button>
+            </div>
           ) : (
             <div className={styles.emptyPreview}>
               <strong>プレビュー</strong>
@@ -245,6 +350,12 @@ export default function ReceiptUploadPage() {
           )}
         </div>
       </section>
+
+      {hasSelection && (
+        <p className={styles.cropHint}>
+          画像上をドラッグしてOCR範囲を選択します。枠外は読み取りません。
+        </p>
+      )}
 
       <section className={styles.actionRow} aria-label="解析操作">
         <button
