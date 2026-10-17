@@ -99,6 +99,10 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount(text)).toBe(746);
   });
 
+  it("prefers 合計 over 商品合計", () => {
+    expect(extractTotalAmount("商品合計 ¥1,000\n合計 ¥1,100")).toBe(1100);
+  });
+
   it("does not use cash tendered or change when the total label is missing", () => {
     expect(extractTotalAmount("現金 5000\nお釣り 4200")).toBeNull();
     expect(extractTotalAmount("現金 ¥5,000\nお釣り ¥4,200")).toBeNull();

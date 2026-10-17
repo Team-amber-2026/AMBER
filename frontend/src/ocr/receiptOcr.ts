@@ -31,6 +31,25 @@ let workerPromise: Promise<Worker> | null = null;
 let recognitionPass = 0;
 const enqueueOcr = createSerialTaskQueue();
 
+function findTotalKeyword(line: string) {
+  let offset = 0;
+  while (offset <= line.length) {
+    const match = totalKeywords.exec(line.slice(offset));
+    if (!match) {
+      return null;
+    }
+
+    const index = offset + match.index;
+    const prefix = line.slice(0, index).replace(/\s/g, "");
+    if (!prefix.endsWith("商品")) {
+      return { index, text: match[0] };
+    }
+    offset = index + match[0].length;
+  }
+
+  return null;
+}
+
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker(["jpn", "eng"], OEM.LSTM_ONLY, {
@@ -408,7 +427,7 @@ export function extractShopName(lines: OCRLine[]) {
     const text = cleanShopName(line.text);
     const compactText = text.replace(/\s+/g, "");
     const top = line.top ?? index / Math.max(lines.length, 1);
-    if (!text || top > shopHeaderHeightRatio || datePattern.test(text) || totalKeywords.test(text)) {
+    if (!text || top > shopHeaderHeightRatio || datePattern.test(text) || findTotalKeyword(text)) {
       return [];
     }
     if (nonShopNameLine.test(compactText)) {
@@ -524,7 +543,7 @@ function getTotalAmountCandidate(
 ): FieldCandidate<number> | null {
   const candidates: FieldCandidate<number>[] = [];
   for (const [index, line] of lines.entries()) {
-    if (totalKeywords.test(line.text)) {
+    if (findTotalKeyword(line.text)) {
       const followingLine = lines[index + 1];
       const relatedLines = followingLine ? [line, followingLine] : [line];
       const value = extractTotalAmount(relatedLines.map(({ text }) => text).join("\n"));
@@ -602,12 +621,12 @@ export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map(normalizeOCRText);
 
   for (const [index, line] of lines.entries()) {
-    const keywordMatch = totalKeywords.exec(line);
+    const keywordMatch = findTotalKeyword(line);
     if (!keywordMatch) {
       continue;
     }
 
-    const afterKeyword = line.slice(keywordMatch.index + keywordMatch[0].length);
+    const afterKeyword = line.slice(keywordMatch.index + keywordMatch.text.length);
     const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
     if (sameLineAmount !== null) {
       return sameLineAmount;
