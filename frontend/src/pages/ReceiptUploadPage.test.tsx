@@ -28,7 +28,9 @@ beforeEach(() => {
   vi.mocked(fetchCategories).mockResolvedValue([{ id: 1, name: "食費" }, { id: 4, name: "その他" }]);
   vi.mocked(runReceiptOcr).mockResolvedValue({
     shop_name: "スーパー", purchased_at: "2026-08-01", total_amount: 100,
-    raw_ocr_text: "スーパー 合計100円", confidence: 90, engine: "tesseract.js",
+    raw_ocr_text: "スーパー 合計100円", confidence: 90,
+    field_confidence: { shop_name: 90, purchased_at: 90, total_amount: 90 },
+    engine: "tesseract.js",
   });
   vi.mocked(classifyCategory).mockRejectedValueOnce(new Error("offline"))
     .mockResolvedValue({ id: 1, name: "食費" });
@@ -111,5 +113,37 @@ describe("classification error recovery", () => {
     expect(container.textContent).not.toContain(classificationWarning);
     expect(container.textContent).toContain(listWarning);
     expect(container.querySelector("select")?.value).toBe("食費");
+  });
+});
+
+describe("OCR crop changes", () => {
+  it("invalidates analyzed data when the crop changes or is reset", async () => {
+    await renderPage();
+    await selectFile();
+    await clickButton("OCR解析へ進む");
+    expect(container.querySelector('[aria-labelledby="receipt-result-title"]')).not.toBeNull();
+
+    const cropFrame = container.querySelector("img")!.parentElement!;
+    vi.spyOn(cropFrame, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 100, bottom: 100,
+      width: 100, height: 100, toJSON: () => ({}),
+    } as DOMRect);
+    await act(async () => {
+      cropFrame.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true, clientX: 10, clientY: 10,
+      }));
+      cropFrame.dispatchEvent(new MouseEvent("pointermove", {
+        bubbles: true, clientX: 80, clientY: 80,
+      }));
+      cropFrame.dispatchEvent(new MouseEvent("pointerup", {
+        bubbles: true, clientX: 80, clientY: 80,
+      }));
+    });
+
+    expect(container.querySelector('[aria-labelledby="receipt-result-title"]')).toBeNull();
+    await clickButton("OCR解析へ進む");
+    expect(container.querySelector('[aria-labelledby="receipt-result-title"]')).not.toBeNull();
+    await clickButton("全体を選択");
+    expect(container.querySelector('[aria-labelledby="receipt-result-title"]')).toBeNull();
   });
 });
