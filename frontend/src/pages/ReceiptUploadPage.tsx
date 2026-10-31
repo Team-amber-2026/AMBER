@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, PointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { classifyCategory, fetchCategories, saveExpense } from "../api/expenses";
 import CategorySelect from "../components/CategorySelect";
 import { runReceiptOcr, toClientOCRResult } from "../ocr/receiptOcr";
+import type { ReceiptImageCrop } from "../ocr/receiptOcr";
 import type { Category, ExpenseSavePayload, ReceiptOCRResult } from "../types";
 import { readableError } from "../utils/errors";
 import styles from "./ReceiptUploadPage.module.css";
 
 const maxImageSize = 10 * 1024 * 1024;
 const lowConfidenceThreshold = 70;
+const fullImageCrop: ReceiptImageCrop = { x: 0, y: 0, width: 1, height: 1 };
+const minimumCropSize = 0.025;
 const initialConfirmForm: ExpenseSavePayload = {
   shop_name: "",
   purchased_at: "",
@@ -25,7 +28,14 @@ export default function ReceiptUploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisGenerationRef = useRef(0);
   const analysisControllerRef = useRef<AbortController | null>(null);
+  const cropFrameRef = useRef<HTMLDivElement>(null);
+  const cropDragRef = useRef<{
+    x: number;
+    y: number;
+    previousCrop: ReceiptImageCrop;
+  } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [crop, setCrop] = useState<ReceiptImageCrop>(fullImageCrop);
   const [previewUrl, setPreviewUrl] = useState("");
   const [result, setResult] = useState<ReceiptOCRResult | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -85,6 +95,7 @@ export default function ReceiptUploadPage() {
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     resetAnalysis();
+    setCrop(fullImageCrop);
 
     if (!file) {
       setSelectedFile(null);
@@ -136,6 +147,7 @@ export default function ReceiptUploadPage() {
           setOcrProgress(progress);
         },
         controller.signal,
+        crop,
       );
       if (generation !== analysisGenerationRef.current) {
         return;
@@ -231,10 +243,80 @@ export default function ReceiptUploadPage() {
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     setSelectedFile(null);
+    setCrop(fullImageCrop);
     resetAnalysis();
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  }
+
+  function getCropPoint(clientX: number, clientY: number) {
+    const bounds = cropFrameRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width === 0 || bounds.height === 0) {
+      return null;
+    }
+    return {
+      x: Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (clientY - bounds.top) / bounds.height)),
+    };
+  }
+
+  function updateCropDrag(clientX: number, clientY: number) {
+    const start = cropDragRef.current;
+    const point = getCropPoint(clientX, clientY);
+    if (!start || !point) {
+      return null;
+    }
+    const nextCrop = {
+      x: Math.min(start.x, point.x),
+      y: Math.min(start.y, point.y),
+      width: Math.abs(point.x - start.x),
+      height: Math.abs(point.y - start.y),
+    };
+    setCrop(nextCrop);
+    return nextCrop;
+  }
+
+  function handleCropPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (isBusy) {
+      return;
+    }
+    const point = getCropPoint(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    cropDragRef.current = { ...point, previousCrop: crop };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setCrop({ ...point, width: 0, height: 0 });
+  }
+
+  function handleCropPointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (!cropDragRef.current) {
+      return;
+    }
+    const nextCrop = updateCropDrag(event.clientX, event.clientY);
+    const previousCrop = cropDragRef.current.previousCrop;
+    cropDragRef.current = null;
+    if (!nextCrop || nextCrop.width < minimumCropSize || nextCrop.height < minimumCropSize) {
+      setCrop(previousCrop);
+    } else if (!areCropsEqual(previousCrop, nextCrop)) {
+      resetAnalysis();
+    }
+  }
+
+  function handleCropPointerCancel() {
+    const previousCrop = cropDragRef.current?.previousCrop;
+    cropDragRef.current = null;
+    if (previousCrop) {
+      setCrop(previousCrop);
+    }
+  }
+
+  function resetCropSelection() {
+    if (!areCropsEqual(crop, fullImageCrop)) {
+      resetAnalysis();
+    }
+    setCrop(fullImageCrop);
   }
 
   const hasSelection = selectedFile !== null;
@@ -258,9 +340,9 @@ export default function ReceiptUploadPage() {
       {error && <p className={styles.error}>{error}</p>}
       {categoryError && <p className={styles.error}>{categoryError}</p>}
       {classificationError && <p className={styles.error}>{classificationError}</p>}
-      {result && result.confidence < lowConfidenceThreshold && (
+      {result && Object.values(result.field_confidence).some((confidence) => confidence < lowConfidenceThreshold) && (
         <p className={styles.warning}>
-          OCRの信頼度が低いため、店名・購入日・合計金額をレシート画像と照合してください。
+          読み取り信頼度が低い項目があります。各項目をレシート画像と照合してください。
         </p>
       )}
 
@@ -284,7 +366,39 @@ export default function ReceiptUploadPage() {
 
         <div className={styles.previewPanel}>
           {previewUrl ? (
-            <img src={previewUrl} alt="選択したレシート画像のプレビュー" />
+            <div
+              ref={cropFrameRef}
+              className={styles.cropFrame}
+              onPointerDown={handleCropPointerDown}
+              onPointerMove={(event) => updateCropDrag(event.clientX, event.clientY)}
+              onPointerUp={handleCropPointerUp}
+              onPointerCancel={handleCropPointerCancel}
+            >
+              <img
+                src={previewUrl}
+                alt="選択したレシート画像。ドラッグして読み取り範囲を指定できます"
+                draggable={false}
+              />
+              <div
+                className={styles.cropSelection}
+                style={{
+                  left: `${crop.x * 100}%`,
+                  top: `${crop.y * 100}%`,
+                  width: `${crop.width * 100}%`,
+                  height: `${crop.height * 100}%`,
+                }}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                className={styles.resetCropButton}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={resetCropSelection}
+                disabled={isBusy}
+              >
+                全体を選択
+              </button>
+            </div>
           ) : (
             <div className={styles.emptyPreview}>
               <strong>プレビュー</strong>
@@ -293,6 +407,12 @@ export default function ReceiptUploadPage() {
           )}
         </div>
       </section>
+
+      {hasSelection && (
+        <p className={styles.cropHint}>
+          画像上をドラッグしてOCR範囲を選択します。枠外は読み取りません。
+        </p>
+      )}
 
       <section className={styles.actionRow} aria-label="解析操作">
         <button
@@ -330,7 +450,7 @@ export default function ReceiptUploadPage() {
               <h2 id="receipt-result-title">支出として保存</h2>
             </div>
             <span>
-              {selectedFile?.name ?? "-"}・信頼度 {Math.round(result.confidence)}%
+              {selectedFile?.name ?? "-"}
             </span>
           </div>
 
@@ -339,29 +459,64 @@ export default function ReceiptUploadPage() {
               店名
               <input
                 type="text"
+                aria-label="店名"
                 value={confirmForm.shop_name}
                 onChange={(event) =>
                   setConfirmForm((current) => ({ ...current, shop_name: event.target.value }))
                 }
                 placeholder="店名を入力"
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.shop_name)}>
+                OCR信頼度 {Math.round(result.field_confidence.shop_name)}%
+              </small>
+              {getFieldReviewMessage(
+                result.shop_name,
+                result.field_confidence.shop_name,
+                "店名",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.shop_name,
+                    result.field_confidence.shop_name,
+                    "店名",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
               購入日
               <input
                 type="date"
+                aria-label="購入日"
                 value={confirmForm.purchased_at}
                 onChange={(event) =>
                   setConfirmForm((current) => ({ ...current, purchased_at: event.target.value }))
                 }
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.purchased_at)}>
+                OCR信頼度 {Math.round(result.field_confidence.purchased_at)}%
+              </small>
+              {getFieldReviewMessage(
+                result.purchased_at,
+                result.field_confidence.purchased_at,
+                "購入日",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.purchased_at,
+                    result.field_confidence.purchased_at,
+                    "購入日",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
               合計金額
               <input
                 type="number"
+                aria-label="合計金額"
                 min="1"
                 inputMode="numeric"
                 value={confirmForm.total_amount || ""}
@@ -373,6 +528,22 @@ export default function ReceiptUploadPage() {
                 }
                 placeholder="0"
               />
+              <small className={getFieldConfidenceClass(result.field_confidence.total_amount)}>
+                OCR信頼度 {Math.round(result.field_confidence.total_amount)}%
+              </small>
+              {getFieldReviewMessage(
+                result.total_amount,
+                result.field_confidence.total_amount,
+                "合計金額",
+              ) && (
+                <small className={styles.fieldWarning}>
+                  {getFieldReviewMessage(
+                    result.total_amount,
+                    result.field_confidence.total_amount,
+                    "合計金額",
+                  )}
+                </small>
+              )}
             </label>
 
             <label>
@@ -413,6 +584,11 @@ export default function ReceiptUploadPage() {
   );
 }
 
+function areCropsEqual(left: ReceiptImageCrop, right: ReceiptImageCrop) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height;
+}
+
 function validateConfirmForm(form: ExpenseSavePayload) {
   if (!form.purchased_at) {
     return "購入日を入力してください。";
@@ -427,6 +603,24 @@ function validateConfirmForm(form: ExpenseSavePayload) {
   }
 
   return "";
+}
+
+function getFieldReviewMessage(
+  value: string | number | null,
+  confidence: number,
+  fieldName: string,
+) {
+  if (value === null || value === "") {
+    return `${fieldName}を読み取れませんでした。画像を確認して入力してください。`;
+  }
+  if (confidence < lowConfidenceThreshold) {
+    return `${fieldName}の読み取りに不確実さがあります。画像で確認してください。`;
+  }
+  return "";
+}
+
+function getFieldConfidenceClass(confidence: number) {
+  return confidence < lowConfidenceThreshold ? styles.fieldWarning : styles.fieldConfidence;
 }
 
 function toJapaneseOcrStatus(status: string) {

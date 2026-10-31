@@ -14,7 +14,7 @@ vi.mock("./api/auth");
 vi.mock("./api/expenses");
 vi.mock("./ocr/receiptOcr", () => ({
   runReceiptOcr: vi.fn(),
-  toClientOCRResult: (result: ReceiptOCRResult) => result,
+  toClientOCRResult: ({ field_confidence: _fieldConfidence, ...result }: ReceiptOCRResult) => result,
 }));
 
 // jsdom omits blob URLs and native dialog methods. Browser QA covers the real dialog.
@@ -87,7 +87,9 @@ beforeEach(() => {
   vi.mocked(expenses.deleteExpense).mockResolvedValue(undefined);
   vi.mocked(runReceiptOcr).mockResolvedValue({
     shop_name: expense.shop_name, purchased_at: expense.purchased_at, total_amount: 1200,
-    raw_ocr_text: expense.raw_ocr_text, confidence: 95, engine: "tesseract.js",
+    raw_ocr_text: expense.raw_ocr_text, confidence: 95,
+    field_confidence: { shop_name: 95, purchased_at: 95, total_amount: 95 },
+    engine: "tesseract.js",
   });
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:receipt");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
@@ -203,6 +205,46 @@ describe("public and account navigation", () => {
 });
 
 describe("saving and expense navigation", () => {
+  it("passes the selected crop to OCR and can restore the full image", async () => {
+    renderApp("/receipts/new");
+    const imageInput = await screen.findByLabelText("レシート画像");
+    const image = new File(["receipt"], "receipt.png", { type: "image/png" });
+    await userEvent.upload(imageInput, image);
+
+    const previewImage = screen.getByAltText(
+      "選択したレシート画像。ドラッグして読み取り範囲を指定できます",
+    );
+    expect((previewImage as HTMLImageElement).draggable).toBe(false);
+    const cropFrame = previewImage.parentElement as HTMLDivElement;
+    vi.spyOn(cropFrame, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 100, bottom: 100,
+      width: 100, height: 100, toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent(cropFrame, new MouseEvent("pointerdown", {
+      bubbles: true, clientX: 10, clientY: 15,
+    }));
+    fireEvent(cropFrame, new MouseEvent("pointermove", {
+      bubbles: true, clientX: 90, clientY: 85,
+    }));
+    fireEvent(cropFrame, new MouseEvent("pointerup", {
+      bubbles: true, clientX: 90, clientY: 85,
+    }));
+    await userEvent.click(screen.getByRole("button", { name: "OCR解析へ進む" }));
+    await screen.findByText("読み取りが完了しました。内容を確認して保存してください。");
+
+    expect(vi.mocked(runReceiptOcr).mock.calls[0][3]).toEqual({
+      x: 0.1, y: 0.15, width: 0.8, height: 0.7,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "全体を選択" }));
+    await userEvent.click(screen.getByRole("button", { name: "OCR解析へ進む" }));
+    await waitFor(() => expect(runReceiptOcr).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(runReceiptOcr).mock.calls[1][3]).toEqual({
+      x: 0, y: 0, width: 1, height: 1,
+    });
+  });
+
   async function prepareReceipt() {
     const input = await screen.findByLabelText("レシート画像");
     await userEvent.upload(input, new File(["receipt"], "receipt.png", { type: "image/png" }));

@@ -8,14 +8,25 @@ import {
 } from "../utils/serialTaskQueue";
 
 type ProgressListener = (message: LoggerMessage) => void;
+type FieldCandidate<T> = { value: T | null; confidence: number };
+
+export type ReceiptImageCrop = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 const totalKeywords = /(?:合\s*(?:計|言\s*[十ニ二])|言\s*[十ニ二]|お\s*買\s*上(?:げ)?\s*金\s*額|ご\s*請\s*求\s*額|現\s*計|総\s*額)/;
 const datePattern = /(?<year>20\d{2})\s*(?:\/|\.|年)\s*(?<month>\d{1,2})\s*(?:\/|\.|月)\s*(?<day>\d{1,2})(?:日)?/;
 const currencyAmountPattern = /(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)/gi;
 const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)(?![0-9A-Za-z])/g;
-const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額)/;
+const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?|ポイント|マイル|残\s*高|獲\s*得|利用|使用|還\s*元|加\s*算)/;
+const bareAmountLine = /^(?:[¥￥Y\\]\s*)?\d{1,3}(?:[,.]\s?\d{3})*(?:[,.]?\d+)?\s*(?:円)?(?:[※\-ー—~～])?$/;
+const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ)/;
 const maxReceiptImageSide = 2200;
 const maxReceiptImagePixels = 4_000_000;
+const shopHeaderHeightRatio = 0.45;
 
 let progressListener: ProgressListener | null = null;
 let workerPromise: Promise<Worker> | null = null;
@@ -33,10 +44,10 @@ function getWorker() {
           });
           return;
         }
-        const offset = recognitionPass === 1 ? 0.1 : 0.55;
+        const offset = recognitionPass === 1 ? 0.1 : recognitionPass === 2 ? 0.4 : 0.7;
         progressListener?.({
           ...message,
-          progress: offset + message.progress * 0.45,
+          progress: offset + message.progress * 0.3,
         });
       },
     }).catch((error) => {
@@ -51,9 +62,10 @@ export function runReceiptOcr(
   image: File,
   onProgress?: ProgressListener,
   signal?: AbortSignal,
+  crop?: ReceiptImageCrop,
 ): Promise<ReceiptOCRResult> {
   return enqueueOcr(
-    () => runReceiptOcrExclusive(image, onProgress, signal),
+    () => runReceiptOcrExclusive(image, onProgress, signal, crop),
     signal,
   );
 }
@@ -62,9 +74,11 @@ async function runReceiptOcrExclusive(
   image: File,
   onProgress?: ProgressListener,
   signal?: AbortSignal,
+  crop?: ReceiptImageCrop,
 ): Promise<ReceiptOCRResult> {
   progressListener = onProgress ?? null;
   let preparedImage: HTMLCanvasElement | null = null;
+  let headerImage: HTMLCanvasElement | null = null;
   let worker: Worker | null = null;
   const handleAbort = () => {
     if (!worker) {
@@ -79,7 +93,7 @@ async function runReceiptOcrExclusive(
     worker = await raceWithAbort(getWorker(), signal);
     throwIfAborted(signal);
     signal?.addEventListener("abort", handleAbort, { once: true });
-    preparedImage = await prepareReceiptImage(image);
+    preparedImage = await prepareReceiptImage(image, crop);
     throwIfAborted(signal);
     await raceWithAbort(
       worker.setParameters({
@@ -142,28 +156,91 @@ async function runReceiptOcrExclusive(
     }
     throwIfAborted(signal);
 
+    let headerResult: Tesseract.RecognizeResult | null = null;
+    try {
+      headerImage = createReceiptHeaderImage(preparedImage);
+      await raceWithAbort(
+        worker.setParameters({
+          tessedit_pageseg_mode: PSM.AUTO,
+          preserve_interword_spaces: "1",
+          user_defined_dpi: "300",
+        }),
+        signal,
+      );
+      recognitionPass = 3;
+      headerResult = await raceWithAbort(
+        worker.recognize(headerImage, {}, { text: true, blocks: true }),
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason ?? error;
+      }
+      // Full-page recognition remains usable if the header pass is unavailable.
+    } finally {
+      if (!signal?.aborted) {
+        try {
+          await raceWithAbort(
+            worker.setParameters({
+              tessedit_pageseg_mode: PSM.AUTO,
+              preserve_interword_spaces: "0",
+            }),
+            signal,
+          );
+        } catch {
+          // The next run configures the page segmentation mode again.
+        }
+      }
+    }
+    throwIfAborted(signal);
+
     const originalText = originalResult.data.text.trim();
     const enhancedText = enhancedResult?.data.text.trim() ?? "";
+    const headerText = headerResult?.data.text.trim() ?? "";
     const extractionText = [enhancedText, originalText].filter(Boolean).join("\n");
-    const originalLines = extractLines(originalResult.data, originalText);
+    const originalLines = extractLines(originalResult.data, originalText, preparedImage.height);
     const enhancedLines = enhancedResult
-      ? extractLines(enhancedResult.data, enhancedText)
+      ? extractLines(enhancedResult.data, enhancedText, preparedImage.height)
+      : [];
+    const headerLines = headerResult
+      ? extractLines(headerResult.data, headerText, preparedImage.height, 0, headerImage?.height ?? 0)
       : [];
     const rawText = enhancedText.length > originalText.length ? enhancedText : originalText;
     const confidence = enhancedResult
       ? (originalResult.data.confidence + enhancedResult.data.confidence) / 2
       : originalResult.data.confidence;
+    const rawShopCandidate = resolveFieldCandidate([
+      extractShopNameCandidate(originalLines),
+      ...enhancedLines.length > 0 ? [extractShopNameCandidate(enhancedLines)] : [],
+    ]);
+    const shopCandidate = choosePreferredShopNameCandidate(
+      [rawShopCandidate],
+      headerLines.length > 0 ? extractShopNameCandidate(headerLines) : undefined,
+    );
+    const dateCandidate = resolveFieldCandidate([
+      extractDateCandidate(originalText, originalLines, originalResult.data.confidence),
+      ...(enhancedResult
+        ? [extractDateCandidate(enhancedText, enhancedLines, enhancedResult.data.confidence)]
+        : []),
+    ]);
+    const totalCandidate = resolveFieldCandidate([
+      extractTotalCandidate(originalText, originalLines, originalResult.data.confidence),
+      ...(enhancedResult
+        ? [extractTotalCandidate(enhancedText, enhancedLines, enhancedResult.data.confidence)]
+        : []),
+    ]);
 
     return {
-      shop_name:
-        extractShopName(originalLines) ??
-        extractShopName(enhancedLines),
-      purchased_at: extractPurchasedAt(extractionText),
-      total_amount:
-        extractTotalAmount(enhancedText) ??
-        extractTotalAmount(originalText),
+      shop_name: shopCandidate.value,
+      purchased_at: dateCandidate.value,
+      total_amount: totalCandidate.value,
       raw_ocr_text: rawText,
       confidence,
+      field_confidence: {
+        shop_name: shopCandidate.confidence,
+        purchased_at: dateCandidate.confidence,
+        total_amount: totalCandidate.confidence,
+      },
       engine: "tesseract.js",
     };
   } finally {
@@ -171,6 +248,10 @@ async function runReceiptOcrExclusive(
     if (preparedImage) {
       preparedImage.width = 0;
       preparedImage.height = 0;
+    }
+    if (headerImage) {
+      headerImage.width = 0;
+      headerImage.height = 0;
     }
     recognitionPass = 0;
     if (progressListener === onProgress) {
@@ -188,15 +269,25 @@ function throwIfAborted(signal?: AbortSignal) {
 export type OCRLine = {
   text: string;
   confidence: number;
+  top?: number;
+  height?: number;
 };
 
-function extractLines(data: Tesseract.Page, rawText: string): OCRLine[] {
+function extractLines(
+  data: Tesseract.Page,
+  rawText: string,
+  pageHeight: number,
+  yOffset = 0,
+  regionHeight = pageHeight,
+): OCRLine[] {
   const detectedLines =
     data.blocks?.flatMap((block) =>
       block.paragraphs.flatMap((paragraph) =>
         paragraph.lines.map((line) => ({
           text: line.text.trim(),
           confidence: line.confidence,
+          top: (yOffset + line.bbox.y0) / pageHeight,
+          height: line.bbox.y1 - line.bbox.y0,
         })),
       ),
     ) ?? [];
@@ -205,32 +296,125 @@ function extractLines(data: Tesseract.Page, rawText: string): OCRLine[] {
     return detectedLines.filter((line) => line.text.length > 0);
   }
 
-  return rawText
+  const rawLines = rawText
     .split(/\r?\n/)
-    .map((text) => ({ text: text.trim(), confidence: data.confidence }))
-    .filter((line) => line.text.length > 0);
+    .map((text) => text.trim())
+    .filter((line) => line.length > 0);
+  return rawLines.map((line, index) => ({
+    text: line,
+    confidence: data.confidence,
+    top: (yOffset + (index / Math.max(rawLines.length, 1)) * regionHeight) / pageHeight,
+  }));
 }
 
 export function extractShopName(lines: OCRLine[]) {
-  const candidates = lines.slice(0, 8).filter(({ text }) => {
-    if (!text || datePattern.test(text) || totalKeywords.test(text)) {
-      return false;
+  return extractShopNameCandidate(lines).value;
+}
+
+export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> {
+  const uniqueLineHeights = new Map<string, number>();
+  for (const line of lines) {
+    if (line.height && line.height > 0) {
+      const compactText = cleanShopName(line.text).replace(/\s+/g, "");
+      uniqueLineHeights.set(
+        compactText,
+        Math.max(uniqueLineHeights.get(compactText) ?? 0, line.height),
+      );
     }
-    if (/(?:TEL|〒|領収書|レシート|営業時間|\d{2,4}[-ー]\d{2,4}|[都道府県市区町丁目番地])/i.test(text)) {
-      return false;
+  }
+  const baselineHeight = median([...uniqueLineHeights.values()]);
+
+  const candidates = lines.flatMap((line, index) => {
+    const text = cleanShopName(line.text);
+    const compactText = text.replace(/\s+/g, "");
+    const top = line.top ?? index / Math.max(lines.length, 1);
+    if (!text || top > shopHeaderHeightRatio || datePattern.test(text) || totalKeywords.test(text)) {
+      return [];
     }
-    return (text.match(/[A-Za-zァ-ヶ一-龯々〆ヵヶ]/g) ?? []).length >= 2;
+    if (nonShopNameLine.test(compactText)) {
+      return [];
+    }
+    if (/(?:TEL|〒|領収書|領収証|レシート|営業時間|ありがとうございました|お買い上げ|登録番号|適格請求書|担当|レジ|ポイント|クーポン|\d{2,4}[-ー]\d{2,4}|[都道府県市区町丁目番地])/i.test(compactText)) {
+      return [];
+    }
+    if ((text.match(/[A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ]/g) ?? []).length < 2) {
+      return [];
+    }
+    const hasShopCharacter = compactText.includes("店");
+    const hasDistinctiveSize =
+      line.height !== undefined &&
+      line.height >= Math.max(baselineHeight * 1.3, 18);
+    if (!hasShopCharacter && !hasDistinctiveSize && line.confidence < 45) {
+      return [];
+    }
+    const score =
+      line.confidence +
+      Number(hasShopCharacter) * 15 +
+      Number(hasDistinctiveSize) * 10 -
+      top * 15;
+    return [{ ...line, text, top, score }];
   });
 
   if (candidates.length === 0) {
-    return null;
+    return { value: null, confidence: 0 };
   }
 
-  const selected = candidates.reduce((best, current) =>
-    current.confidence > best.confidence ? current : best,
-  ).text;
+  const selected = candidates.sort((candidateA, candidateB) =>
+    candidateB.score - candidateA.score || candidateA.top - candidateB.top,
+  )[0];
+  return {
+    value: selected.text.slice(0, 255),
+    confidence: selected.confidence,
+  };
+}
 
-  return cleanShopName(selected).slice(0, 255);
+export function choosePreferredShopNameCandidate(
+  rawCandidates: FieldCandidate<string>[],
+  fallbackCandidate?: FieldCandidate<string>,
+): FieldCandidate<string> {
+  const preferredRawCandidate = resolveFieldCandidate(rawCandidates);
+  return preferredRawCandidate.value !== null
+    ? preferredRawCandidate
+    : fallbackCandidate ?? { value: null, confidence: 0 };
+}
+
+export function resolveFieldCandidate<T extends string | number>(
+  candidates: FieldCandidate<T>[],
+): FieldCandidate<T> {
+  const groups = new Map<T, number[]>();
+  for (const candidate of candidates) {
+    if (candidate.value === null) {
+      continue;
+    }
+    const confidences = groups.get(candidate.value) ?? [];
+    confidences.push(candidate.confidence ?? 0);
+    groups.set(candidate.value, confidences);
+  }
+
+  const ranked = [...groups.entries()].map(([value, confidences]) => {
+    const average = confidences.reduce((sum, current) => sum + current, 0) / confidences.length;
+    return {
+      value,
+      confidence: Math.min(100, Math.round(average + 8 * (confidences.length - 1))),
+      score: average + 15 * (confidences.length - 1),
+    };
+  }).sort((candidateA, candidateB) => candidateB.score - candidateA.score);
+
+  const selected = ranked[0];
+  return selected
+    ? { value: selected.value, confidence: selected.confidence }
+    : { value: null, confidence: 0 };
+}
+
+function median(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+  const sorted = [...values].sort((valueA, valueB) => valueA - valueB);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
 }
 
 export function extractPurchasedAt(rawText: string) {
@@ -254,28 +438,123 @@ export function extractPurchasedAt(rawText: string) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function extractDateCandidate(
+  rawText: string,
+  lines: OCRLine[],
+  fallbackConfidence: number,
+): FieldCandidate<string> {
+  const lineCandidates = lines.flatMap((line) => {
+    const value = extractPurchasedAt(line.text);
+    if (!value) {
+      return [];
+    }
+    const top = line.top ?? 1;
+    return [{
+      value,
+      confidence: line.confidence,
+      score: line.confidence + (top < 0.55 ? 8 : 0) - top * 12,
+    }];
+  }).sort((candidateA, candidateB) => candidateB.score - candidateA.score);
+
+  const selected = lineCandidates[0];
+  if (selected) {
+    return { value: selected.value, confidence: selected.confidence };
+  }
+  const value = extractPurchasedAt(rawText);
+  return {
+    value,
+    confidence: value ? fallbackConfidence : 0,
+  };
+}
+
+export function extractTotalCandidate(
+  rawText: string,
+  lines: OCRLine[],
+  fallbackConfidence: number,
+): FieldCandidate<number> {
+  const value = extractTotalAmount(rawText);
+  if (value === null) {
+    return { value: null, confidence: 0 };
+  }
+
+  const explicitTotalConfidences = lines.flatMap((line, index) => {
+    const normalizedText = line.text.normalize("NFKC");
+    const keywordMatch = totalKeywords.exec(normalizedText);
+    if (
+      !keywordMatch ||
+      hasNonMonetaryAggregatePrefix(normalizedText, keywordMatch.index) ||
+      hasNonMonetaryAggregateSuffix(normalizedText, keywordMatch.index, keywordMatch[0].length)
+    ) {
+      return [];
+    }
+
+    const sameLineAmount = extractPrioritizedTotalAmount(normalizedText);
+    if (sameLineAmount === value) {
+      return [line.confidence];
+    }
+
+    const nextLine = lines[index + 1];
+    if (!nextLine) {
+      return [];
+    }
+
+    const nextLineText = nextLine.text.normalize("NFKC");
+    if (isNonMonetaryTotalLine(nextLineText) || !bareAmountLine.test(nextLineText.trim())) {
+      return [];
+    }
+
+    const nextLineAmount = extractPrioritizedTotalAmount(nextLineText);
+    return nextLineAmount === value
+      ? [Math.min(line.confidence, nextLine.confidence)]
+      : [];
+  });
+  if (explicitTotalConfidences.length > 0) {
+    return { value, confidence: Math.max(...explicitTotalConfidences) };
+  }
+
+  const amountConfidence = lines
+    .filter((line) => extractCurrencyAmounts(line.text.normalize("NFKC")).includes(value))
+    .reduce((best, line) => Math.max(best, line.confidence), 0);
+  return {
+    value,
+    confidence: amountConfidence > 0
+      ? Math.round(amountConfidence * 0.75)
+      : Math.round(fallbackConfidence * 0.65),
+  };
+}
+
 export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
+  let selectedTotalAmount: number | null = null;
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
-    if (!keywordMatch) {
+    if (
+      !keywordMatch ||
+      hasNonMonetaryAggregatePrefix(line, keywordMatch.index) ||
+      hasNonMonetaryAggregateSuffix(line, keywordMatch.index, keywordMatch[0].length)
+    ) {
       continue;
     }
 
     const afterKeyword = line.slice(keywordMatch.index + keywordMatch[0].length);
     const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
     if (sameLineAmount !== null) {
-      return sameLineAmount;
+      selectedTotalAmount = sameLineAmount;
+      continue;
     }
 
     const nextLine = lines[index + 1];
-    if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine)) {
+    if (nextLine !== undefined && !isNonMonetaryTotalLine(nextLine) && bareAmountLine.test(nextLine.trim())) {
       const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
       if (nextLineAmount !== null) {
-        return nextLineAmount;
+        selectedTotalAmount = nextLineAmount;
       }
     }
+  }
+
+  if (selectedTotalAmount !== null) {
+    return selectedTotalAmount;
   }
 
   for (const line of lines) {
@@ -291,13 +570,62 @@ export function extractTotalAmount(rawText: string) {
 }
 
 export function toClientOCRResult(result: ReceiptOCRResult): ClientOCRResult {
-  return { ...result };
+  const { field_confidence: _fieldConfidence, ...clientResult } = result;
+  return clientResult;
+}
+
+function hasNonMonetaryAggregatePrefix(value: string, keywordIndex: number) {
+  const prefix = value.slice(0, keywordIndex);
+  return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(prefix);
+}
+
+function hasNonMonetaryAggregateSuffix(value: string, keywordIndex: number, keywordLength: number) {
+  const suffix = value.slice(keywordIndex + keywordLength).normalize("NFKC");
+  const nonMonetaryMatch = suffix.match(/(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i);
+  if (!nonMonetaryMatch || nonMonetaryMatch.index === undefined) {
+    return false;
+  }
+
+  const prefixBeforeLabel = suffix.slice(0, nonMonetaryMatch.index);
+  if (/[（(\[【]/.test(prefixBeforeLabel)) {
+    return false;
+  }
+
+  const amountMatches = [
+    ...suffix.matchAll(currencyAmountPattern),
+    ...suffix.matchAll(plainAmountPattern),
+  ].map((match) => ({
+    match,
+    index: match.index ?? 0,
+    value: Number(match[1].replace(/[\s,.]/g, "")),
+  }));
+  const uniqueAmountMatches: typeof amountMatches = [];
+  for (const item of amountMatches) {
+    const duplicate = uniqueAmountMatches.some((candidate) =>
+      candidate.value === item.value && Math.abs(candidate.index - item.index) <= 2,
+    );
+    if (!duplicate) {
+      uniqueAmountMatches.push(item);
+    }
+  }
+  const firstAmount = uniqueAmountMatches.sort((matchA, matchB) => matchA.index - matchB.index)[0];
+  if (!firstAmount || nonMonetaryMatch.index > firstAmount.index) {
+    return false;
+  }
+
+  return !uniqueAmountMatches.some((match) => match.index > firstAmount.index);
+}
+
+function isNonMonetaryTotalLine(value: string) {
+  const normalized = value.normalize("NFKC");
+  return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(normalized)
+    && /(?:合\s*計|計|総\s*額|金\s*額)/i.test(normalized);
 }
 
 function cleanShopName(value: string) {
   const normalized = value.normalize("NFKC").trim();
   const withoutLeadingNoise = normalized.replace(
-    /^[^A-Za-zァ-ヶ一-龯々〆ヵヶ0-9]+/,
+    /^[^A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ0-9]+/,
     "",
   );
   return withoutLeadingNoise.replace(/\s+/g, " ").trim();
@@ -312,7 +640,15 @@ function extractCurrencyAmounts(line: string) {
 function extractPrioritizedTotalAmount(value: string) {
   const sanitized = value
     .replace(
-      /20\d{2}\s*(?:[\/.\-]|年)\s*\d{1,2}\s*(?:[\/.\-]|月)\s*\d{1,2}(?:\s*日)?/g,
+      /(?:^|[\s:：=＝\-ー—~～()（）\[\]【】])(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)\s*(?=\d)/gi,
+      " ",
+    )
+    .replace(
+      /[（(\[]\s*(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)[^）\])\]]*[）\])\]]/gi,
+      " ",
+    )
+    .replace(
+      /20\d{2}\s*(?:[\/\.\-]|年)\s*\d{1,2}\s*(?:[\/\.\-]|月)\s*\d{1,2}(?:\s*日)?/g,
       " ",
     )
     .replace(/\d{1,2}\s*:\s*\d{2}(?::\s*\d{2})?/g, " ")
@@ -412,11 +748,19 @@ export function calculateReceiptImageSize(width: number, height: number) {
   };
 }
 
-async function prepareReceiptImage(image: File) {
+async function prepareReceiptImage(image: File, crop?: ReceiptImageCrop) {
   const bitmap = await createImageBitmap(image, {
     imageOrientation: "from-image",
   });
-  const size = calculateReceiptImageSize(bitmap.width, bitmap.height);
+  const cropX = Math.max(0, Math.min(1, crop?.x ?? 0));
+  const cropY = Math.max(0, Math.min(1, crop?.y ?? 0));
+  const cropRight = Math.max(cropX, Math.min(1, (crop?.x ?? 0) + (crop?.width ?? 1)));
+  const cropBottom = Math.max(cropY, Math.min(1, (crop?.y ?? 0) + (crop?.height ?? 1)));
+  const sourceX = Math.floor(bitmap.width * cropX);
+  const sourceY = Math.floor(bitmap.height * cropY);
+  const sourceWidth = Math.max(1, Math.floor(bitmap.width * cropRight) - sourceX);
+  const sourceHeight = Math.max(1, Math.floor(bitmap.height * cropBottom) - sourceY);
+  const size = calculateReceiptImageSize(sourceWidth, sourceHeight);
   const canvas = document.createElement("canvas");
   canvas.width = size.width;
   canvas.height = size.height;
@@ -428,12 +772,44 @@ async function prepareReceiptImage(image: File) {
   }
 
   try {
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      bitmap,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
   } finally {
     bitmap.close();
   }
 
   return canvas;
+}
+
+function createReceiptHeaderImage(canvas: HTMLCanvasElement) {
+  const header = document.createElement("canvas");
+  header.width = canvas.width;
+  header.height = Math.max(1, Math.floor(canvas.height * shopHeaderHeightRatio));
+  const context = header.getContext("2d");
+  if (!context) {
+    throw new Error("画像の前処理を開始できませんでした。");
+  }
+  context.drawImage(
+    canvas,
+    0,
+    0,
+    canvas.width,
+    header.height,
+    0,
+    0,
+    header.width,
+    header.height,
+  );
+  return header;
 }
 
 function enhanceReceiptImage(canvas: HTMLCanvasElement) {
@@ -444,15 +820,51 @@ function enhanceReceiptImage(canvas: HTMLCanvasElement) {
 
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
   const pixels = imageData.data;
-  for (let index = 0; index < pixels.length; index += 4) {
-    const luminance =
+  const grayscale = new Uint8Array(pixels.length / 4);
+  const histogram = new Uint32Array(256);
+  for (let pixelIndex = 0; pixelIndex < grayscale.length; pixelIndex += 1) {
+    const index = pixelIndex * 4;
+    const luminance = Math.round(
       pixels[index] * 0.299 +
       pixels[index + 1] * 0.587 +
-      pixels[index + 2] * 0.114;
-    const contrasted = Math.max(0, Math.min(255, (luminance - 128) * 1.45 + 128));
+      pixels[index + 2] * 0.114,
+    );
+    grayscale[pixelIndex] = luminance;
+    histogram[luminance] += 1;
+  }
+
+  const low = findHistogramPercentile(histogram, grayscale.length, 0.02);
+  const high = findHistogramPercentile(histogram, grayscale.length, 0.98);
+  if (high <= low) {
+    return;
+  }
+
+  const range = high - low;
+  for (let pixelIndex = 0; pixelIndex < grayscale.length; pixelIndex += 1) {
+    const index = pixelIndex * 4;
+    const contrasted = Math.max(
+      0,
+      Math.min(255, Math.round(((grayscale[pixelIndex] - low) * 255) / range)),
+    );
     pixels[index] = contrasted;
     pixels[index + 1] = contrasted;
     pixels[index + 2] = contrasted;
   }
   context.putImageData(imageData, 0, 0);
+}
+
+function findHistogramPercentile(
+  histogram: Uint32Array,
+  pixelCount: number,
+  percentile: number,
+) {
+  const threshold = Math.ceil(pixelCount * percentile);
+  let cumulative = 0;
+  for (let value = 0; value < histogram.length; value += 1) {
+    cumulative += histogram[value];
+    if (cumulative >= threshold) {
+      return value;
+    }
+  }
+  return histogram.length - 1;
 }

@@ -2,12 +2,39 @@ import { describe, expect, it } from "vitest";
 
 import {
   calculateReceiptImageSize,
+  choosePreferredShopNameCandidate,
   extractPurchasedAt,
   extractShopName,
+  extractShopNameCandidate,
   extractTotalAmount,
+  extractTotalCandidate,
+  resolveFieldCandidate,
+  toClientOCRResult,
 } from "./receiptOcr";
 
 describe("receipt OCR field extraction", () => {
+  it("prefers a candidate supported by multiple recognition passes", () => {
+    expect(resolveFieldCandidate([
+      { value: 1000, confidence: 80 },
+      { value: 1200, confidence: 90 },
+      { value: 1000, confidence: 75 },
+    ])).toEqual({ value: 1000, confidence: 86 });
+  });
+
+  it("does not include field confidence in data sent for saving", () => {
+    const result = {
+      shop_name: "Market",
+      purchased_at: "2026-06-12",
+      total_amount: 1200,
+      raw_ocr_text: "合計 1200",
+      confidence: 90,
+      field_confidence: { shop_name: 90, purchased_at: 85, total_amount: 92 },
+      engine: "tesseract.js" as const,
+    };
+
+    expect(toClientOCRResult(result)).not.toHaveProperty("field_confidence");
+  });
+
   it("removes OCR punctuation before the shop name", () => {
     expect(
       extractShopName([
@@ -15,6 +42,60 @@ describe("receipt OCR field extraction", () => {
         { text: "京都府京都市下京区五条通", confidence: 98 },
       ]),
     ).toBe("FamilyMart");
+  });
+
+  it("prefers a faint shop name in the receipt header over high-confidence footer text", () => {
+    expect(
+      extractShopName([
+        { text: "ありがとうございました", confidence: 99, top: 0.88 },
+        { text: "Amber Market", confidence: 61, top: 0.12 },
+      ]),
+    ).toBe("Amber Market");
+  });
+
+  it("prefers the raw OCR shop name when a plausible full-text candidate exists", () => {
+    const rawText = [
+      { text: "アイリス商店", confidence: 92, top: 0.22 },
+      { text: "ありがとうございました", confidence: 98, top: 0.88 },
+    ];
+    const headerText = [
+      { text: "Thank you for shopping", confidence: 96, top: 0.18 },
+      { text: "アイリス商店", confidence: 64, top: 0.12 },
+    ];
+
+    expect(
+      choosePreferredShopNameCandidate(
+        [extractShopNameCandidate(rawText)],
+        extractShopNameCandidate(headerText),
+      ),
+    ).toEqual({ value: "アイリス商店", confidence: 92 });
+  });
+
+  it("uses the image position when OCR returns lines out of visual order", () => {
+    expect(
+      extractShopName([
+        { text: "下部の案内文字", confidence: 99, top: 0.8 },
+        { text: "アンバーマート", confidence: 72, top: 0.08 },
+      ]),
+    ).toBe("アンバーマート");
+  });
+
+  it.each([
+    "毎度ありがとうございます",
+    "単行本",
+    "領 収 書",
+    "領 収 証",
+    "レ シ ー ト",
+    "予めご了承ください",
+    "ご了承くださいませ",
+    "くださいませ",
+  ])("does not select receipt boilerplate as the shop name: %s", (boilerplate) => {
+    expect(
+      extractShopName([
+        { text: boilerplate, confidence: 99, top: 0.05 },
+        { text: "マツモト", confidence: 62, top: 0.16 },
+      ]),
+    ).toBe("マツモト");
   });
 
   it("extracts a spaced Japanese receipt date", () => {
@@ -51,6 +132,81 @@ describe("receipt OCR field extraction", () => {
     ].join("\n");
 
     expect(extractTotalAmount(text)).toBe(746);
+  });
+
+  it("ignores a pre-discount subtotal when a final total is present", () => {
+    const text = [
+      "割引前商品合計 ¥2,500",
+      "割引 ¥500",
+      "合計 ¥2,000",
+    ].join("\n");
+
+    expect(extractTotalAmount(text)).toBe(2000);
+  });
+
+  it("prefers the total amount even when a subtotal is written on the same line", () => {
+    expect(extractTotalAmount("小計 ¥1,000 合計 ¥1,200")).toBe(1200);
+  });
+
+  it("does not let a later item amount override the same-line total", () => {
+    expect(extractTotalAmount("合計 ¥1200\n商品A ¥500")).toBe(1200);
+  });
+
+  it("ignores non-currency aggregate totals such as points before a valid final total", () => {
+    expect(extractTotalAmount("合計 ¥1200\n今回獲得ポイント合計 12")).toBe(1200);
+  });
+
+  it("ignores aggregate point totals that appear just after the total keyword", () => {
+    expect(extractTotalAmount("合計 ¥1200\n合計ポイント 12")).toBe(1200);
+  });
+
+  it("keeps the real total when a point summary is appended after the amount", () => {
+    expect(extractTotalAmount("合計 ¥1200（ポイント利用 100）")).toBe(1200);
+  });
+
+  it("keeps the real total when a point summary is stated before the amount on the same line", () => {
+    expect(extractTotalAmount("合計（ポイント利用 100）¥1,200")).toBe(1200);
+    expect(extractTotalAmount("合計（ポイント利用 100）1,200円")).toBe(1200);
+    expect(extractTotalAmount("合計 ポイント利用 100 ¥1,200")).toBe(1200);
+  });
+
+  it("does not treat a point-aggregate label as a total when it is directly attached to the keyword", () => {
+    expect(extractTotalAmount("合計ポイント ¥100")).toBeNull();
+  });
+
+  it("allows a trailing marker on a following-line total", () => {
+    expect(extractTotalAmount("合計\n¥1,200※")).toBe(1200);
+  });
+
+  it("does not treat a product line as the total when only the total label is on the previous line", () => {
+    expect(extractTotalAmount("合計\n商品A ¥50")).toBeNull();
+  });
+
+  it("keeps the same-line total confidence and ignores unrelated next-line payment data", () => {
+    expect(
+      extractTotalCandidate(
+        "合計 ¥1200\nお預り ¥5,050\nお釣り ¥4,304",
+        [
+          { text: "合計 ¥1200", confidence: 98 },
+          { text: "お預り ¥5,050", confidence: 90 },
+          { text: "お釣り ¥4,304", confidence: 20 },
+        ],
+        95,
+      ),
+    ).toEqual({ value: 1200, confidence: 98 });
+  });
+
+  it("accepts a following-line total with a trailing amount marker", () => {
+    expect(
+      extractTotalCandidate(
+        "合計\n¥1,200※",
+        [
+          { text: "合計", confidence: 95 },
+          { text: "¥1,200※", confidence: 90 },
+        ],
+        95,
+      ),
+    ).toEqual({ value: 1200, confidence: 90 });
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
