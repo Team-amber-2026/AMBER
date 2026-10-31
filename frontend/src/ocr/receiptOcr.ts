@@ -8,7 +8,7 @@ import {
 } from "../utils/serialTaskQueue";
 
 type ProgressListener = (message: LoggerMessage) => void;
-type FieldCandidate<T> = { value: T | null; confidence: number | null };
+type FieldCandidate<T> = { value: T | null; confidence: number };
 
 export type ReceiptImageCrop = {
   x: number;
@@ -352,7 +352,7 @@ function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> {
   });
 
   if (candidates.length === 0) {
-    return { value: null, confidence: null };
+    return { value: null, confidence: 0 };
   }
 
   const selected = candidates.sort((candidateA, candidateB) =>
@@ -389,7 +389,7 @@ export function resolveFieldCandidate<T extends string | number>(
   const selected = ranked[0];
   return selected
     ? { value: selected.value, confidence: selected.confidence }
-    : { value: null, confidence: null };
+    : { value: null, confidence: 0 };
 }
 
 function median(values: number[]) {
@@ -449,7 +449,7 @@ function extractDateCandidate(
   const value = extractPurchasedAt(rawText);
   return {
     value,
-    confidence: value ? fallbackConfidence : null,
+    confidence: value ? fallbackConfidence : 0,
   };
 }
 
@@ -460,7 +460,7 @@ function extractTotalCandidate(
 ): FieldCandidate<number> {
   const value = extractTotalAmount(rawText);
   if (value === null) {
-    return { value: null, confidence: null };
+    return { value: null, confidence: 0 };
   }
 
   const explicitTotalConfidences = lines.flatMap((line, index) => {
