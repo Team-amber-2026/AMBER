@@ -465,7 +465,7 @@ export function extractTotalCandidate(
 
   const explicitTotalConfidences = lines.flatMap((line, index) => {
     const normalizedText = line.text.normalize("NFKC");
-    if (!totalKeywords.test(normalizedText) || nonTotalAmountLine.test(normalizedText)) {
+    if (!totalKeywords.test(normalizedText)) {
       return [];
     }
 
@@ -488,7 +488,8 @@ export function extractTotalCandidate(
     return nextLineAmount === value
       ? [Math.min(line.confidence, nextLine.confidence)]
       : [];
-  });  if (explicitTotalConfidences.length > 0) {
+  });
+  if (explicitTotalConfidences.length > 0) {
     return { value, confidence: Math.max(...explicitTotalConfidences) };
   }
 
@@ -505,29 +506,31 @@ export function extractTotalCandidate(
 
 export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
+  let latestTotalAmount: number | null = null;
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
     if (!keywordMatch) {
       continue;
     }
-    if (nonTotalAmountLine.test(line)) {
-      continue;
-    }
 
     const afterKeyword = line.slice(keywordMatch.index + keywordMatch[0].length);
     const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
     if (sameLineAmount !== null) {
-      return sameLineAmount;
+      latestTotalAmount = sameLineAmount;
     }
 
     const nextLine = lines[index + 1];
     if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine)) {
       const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
       if (nextLineAmount !== null) {
-        return nextLineAmount;
+        latestTotalAmount = nextLineAmount;
       }
     }
+  }
+
+  if (latestTotalAmount !== null) {
+    return latestTotalAmount;
   }
 
   for (const line of lines) {

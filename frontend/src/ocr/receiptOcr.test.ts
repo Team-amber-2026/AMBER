@@ -124,6 +124,10 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount(text)).toBe(2000);
   });
 
+  it("prefers the total amount even when a subtotal is written on the same line", () => {
+    expect(extractTotalAmount("小計 ¥1,000 合計 ¥1,200")).toBe(1200);
+  });
+
   it("keeps the same-line total confidence and ignores unrelated next-line payment data", () => {
     expect(
       extractTotalCandidate(
