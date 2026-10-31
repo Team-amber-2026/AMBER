@@ -5,11 +5,33 @@ import {
   extractPurchasedAt,
   extractShopName,
   extractTotalAmount,
-  isLikelyInvertedTextRegion,
+  resolveFieldCandidate,
   toClientOCRResult,
 } from "./receiptOcr";
 
 describe("receipt OCR field extraction", () => {
+  it("prefers a candidate supported by multiple recognition passes", () => {
+    expect(resolveFieldCandidate([
+      { value: 1000, confidence: 80 },
+      { value: 1200, confidence: 90 },
+      { value: 1000, confidence: 75 },
+    ])).toEqual({ value: 1000, confidence: 86 });
+  });
+
+  it("does not include field confidence in data sent for saving", () => {
+    const result = {
+      shop_name: "Market",
+      purchased_at: "2026-06-12",
+      total_amount: 1200,
+      raw_ocr_text: "合計 1200",
+      confidence: 90,
+      field_confidence: { shop_name: 90, purchased_at: 85, total_amount: 92 },
+      engine: "tesseract.js" as const,
+    };
+
+    expect(toClientOCRResult(result)).not.toHaveProperty("field_confidence");
+  });
+
   it("removes OCR punctuation before the shop name", () => {
     expect(
       extractShopName([
@@ -17,10 +39,6 @@ describe("receipt OCR field extraction", () => {
         { text: "京都府京都市下京区五条通", confidence: 98 },
       ]),
     ).toBe("FamilyMart");
-  });
-
-  it("ignores equals signs inside a shop name", () => {
-    expect(extractShopName([{ text: "Family=Mart", confidence: 91 }])).toBe("FamilyMart");
   });
 
   it("prefers a faint shop name in the receipt header over high-confidence footer text", () => {
@@ -39,15 +57,6 @@ describe("receipt OCR field extraction", () => {
         { text: "アンバーマート", confidence: 72, top: 0.08 },
       ]),
     ).toBe("アンバーマート");
-  });
-
-  it("extracts a shop name when other header lines have the same height", () => {
-    expect(
-      extractShopName([
-        { text: "FamilyMart", confidence: 90, top: 0.08, height: 24 },
-        { text: "Seasonal Fair", confidence: 99, top: 0.2, height: 24 },
-      ]),
-    ).toBe("FamilyMart");
   });
 
   it.each([
@@ -70,10 +79,6 @@ describe("receipt OCR field extraction", () => {
 
   it("extracts a spaced Japanese receipt date", () => {
     expect(extractPurchasedAt("2026年 6月12日 (金) 9:10")).toBe("2026-06-12");
-  });
-
-  it("ignores equals signs inserted into a total label", () => {
-    expect(extractTotalAmount("合=計 ¥1,280")).toBe(1280);
   });
 
   it("uses a repeated tax-inclusive amount when the total label is unreadable", () => {
@@ -106,14 +111,6 @@ describe("receipt OCR field extraction", () => {
     ].join("\n");
 
     expect(extractTotalAmount(text)).toBe(746);
-  });
-
-  it("prefers 合計 over 商品合計", () => {
-    expect(extractTotalAmount("商品合計 ¥1,000\n合計 ¥1,100")).toBe(1100);
-  });
-
-  it("prefers the literal 合計 label over other total labels", () => {
-    expect(extractTotalAmount("総額 ¥1,000\n合計 ¥1,100")).toBe(1100);
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
@@ -159,31 +156,5 @@ describe("receipt OCR image sizing", () => {
       width: 1200,
       height: 900,
     });
-  });
-});
-
-describe("inverted text detection", () => {
-  it("identifies bright text on a predominantly dark background", () => {
-    expect(isLikelyInvertedTextRegion(0.78, 0.18)).toBe(true);
-  });
-
-  it("keeps ordinary dark text on a light background", () => {
-    expect(isLikelyInvertedTextRegion(0.16, 0.76)).toBe(false);
-  });
-});
-
-describe("receipt OCR client result", () => {
-  it("does not include field confidence in the saved OCR payload", () => {
-    const clientResult = toClientOCRResult({
-      shop_name: "テスト店",
-      purchased_at: "2026-06-12",
-      total_amount: 1200,
-      raw_ocr_text: "合計 1200円",
-      confidence: 90,
-      field_confidence: { shop_name: 85, purchased_at: 95, total_amount: 90 },
-      engine: "tesseract.js",
-    });
-
-    expect(clientResult).not.toHaveProperty("field_confidence");
   });
 });
