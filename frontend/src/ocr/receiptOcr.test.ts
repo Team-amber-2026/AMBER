@@ -136,6 +136,10 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount("合計 ¥1200\n今回獲得ポイント合計 12")).toBe(1200);
   });
 
+  it("ignores aggregate point totals that appear just after the total keyword", () => {
+    expect(extractTotalAmount("合計 ¥1200\n合計ポイント 12")).toBe(1200);
+  });
+
   it("allows a trailing marker on a following-line total", () => {
     expect(extractTotalAmount("合計\n¥1,200※")).toBe(1200);
   });

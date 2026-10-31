@@ -467,7 +467,11 @@ export function extractTotalCandidate(
   const explicitTotalConfidences = lines.flatMap((line, index) => {
     const normalizedText = line.text.normalize("NFKC");
     const keywordMatch = totalKeywords.exec(normalizedText);
-    if (!keywordMatch || hasNonMonetaryAggregatePrefix(normalizedText, keywordMatch.index)) {
+    if (
+      !keywordMatch ||
+      hasNonMonetaryAggregatePrefix(normalizedText, keywordMatch.index) ||
+      hasNonMonetaryAggregateSuffix(normalizedText, keywordMatch.index, keywordMatch[0].length)
+    ) {
       return [];
     }
 
@@ -512,7 +516,11 @@ export function extractTotalAmount(rawText: string) {
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
-    if (!keywordMatch || hasNonMonetaryAggregatePrefix(line, keywordMatch.index)) {
+    if (
+      !keywordMatch ||
+      hasNonMonetaryAggregatePrefix(line, keywordMatch.index) ||
+      hasNonMonetaryAggregateSuffix(line, keywordMatch.index, keywordMatch[0].length)
+    ) {
       continue;
     }
 
@@ -558,6 +566,11 @@ function hasNonMonetaryAggregatePrefix(value: string, keywordIndex: number) {
   return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(prefix);
 }
 
+function hasNonMonetaryAggregateSuffix(value: string, keywordIndex: number, keywordLength: number) {
+  const suffix = value.slice(keywordIndex + keywordLength);
+  return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(suffix);
+}
+
 function isNonMonetaryTotalLine(value: string) {
   const normalized = value.normalize("NFKC");
   return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(normalized)
@@ -581,6 +594,10 @@ function extractCurrencyAmounts(line: string) {
 
 function extractPrioritizedTotalAmount(value: string) {
   const sanitized = value
+    .replace(
+      /(?:^|[\s:：=＝\-ー—~～()（）\[\]【】])(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)\s*(?=\d)/gi,
+      " ",
+    )
     .replace(
       /20\d{2}\s*(?:[\/.\-]|年)\s*\d{1,2}\s*(?:[\/.\-]|月)\s*\d{1,2}(?:\s*日)?/g,
       " ",
