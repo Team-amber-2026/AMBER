@@ -581,18 +581,39 @@ function hasNonMonetaryAggregatePrefix(value: string, keywordIndex: number) {
 
 function hasNonMonetaryAggregateSuffix(value: string, keywordIndex: number, keywordLength: number) {
   const suffix = value.slice(keywordIndex + keywordLength).normalize("NFKC");
-  const amountMatches = [
-    ...suffix.matchAll(currencyAmountPattern),
-    ...suffix.matchAll(plainAmountPattern),
-  ];
-  const firstAmountIndex = amountMatches.length > 0
-    ? Math.min(...amountMatches.map((match) => match.index ?? 0))
-    : null;
   const nonMonetaryMatch = suffix.match(/(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i);
   if (!nonMonetaryMatch || nonMonetaryMatch.index === undefined) {
     return false;
   }
-  return firstAmountIndex === null || nonMonetaryMatch.index < firstAmountIndex;
+
+  const prefixBeforeLabel = suffix.slice(0, nonMonetaryMatch.index);
+  if (/[（(\[【]/.test(prefixBeforeLabel)) {
+    return false;
+  }
+
+  const amountMatches = [
+    ...suffix.matchAll(currencyAmountPattern),
+    ...suffix.matchAll(plainAmountPattern),
+  ].map((match) => ({
+    match,
+    index: match.index ?? 0,
+    value: Number(match[1].replace(/[\s,.]/g, "")),
+  }));
+  const uniqueAmountMatches: typeof amountMatches = [];
+  for (const item of amountMatches) {
+    const duplicate = uniqueAmountMatches.some((candidate) =>
+      candidate.value === item.value && Math.abs(candidate.index - item.index) <= 2,
+    );
+    if (!duplicate) {
+      uniqueAmountMatches.push(item);
+    }
+  }
+  const firstAmount = uniqueAmountMatches.sort((matchA, matchB) => matchA.index - matchB.index)[0];
+  if (!firstAmount || nonMonetaryMatch.index > firstAmount.index) {
+    return false;
+  }
+
+  return !uniqueAmountMatches.some((match) => match.index > firstAmount.index);
 }
 
 function isNonMonetaryTotalLine(value: string) {
@@ -623,7 +644,11 @@ function extractPrioritizedTotalAmount(value: string) {
       " ",
     )
     .replace(
-      /20\d{2}\s*(?:[\/.\-]|年)\s*\d{1,2}\s*(?:[\/.\-]|月)\s*\d{1,2}(?:\s*日)?/g,
+      /[（(\[]\s*(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)[^）\])\]]*[）\])\]]/gi,
+      " ",
+    )
+    .replace(
+      /20\d{2}\s*(?:[\/\.\-]|年)\s*\d{1,2}\s*(?:[\/\.\-]|月)\s*\d{1,2}(?:\s*日)?/g,
       " ",
     )
     .replace(/\d{1,2}\s*:\s*\d{2}(?::\s*\d{2})?/g, " ")

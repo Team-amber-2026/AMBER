@@ -164,6 +164,16 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount("合計 ¥1200（ポイント利用 100）")).toBe(1200);
   });
 
+  it("keeps the real total when a point summary is stated before the amount on the same line", () => {
+    expect(extractTotalAmount("合計（ポイント利用 100）¥1,200")).toBe(1200);
+    expect(extractTotalAmount("合計（ポイント利用 100）1,200円")).toBe(1200);
+    expect(extractTotalAmount("合計 ポイント利用 100 ¥1,200")).toBe(1200);
+  });
+
+  it("does not treat a point-aggregate label as a total when it is directly attached to the keyword", () => {
+    expect(extractTotalAmount("合計ポイント ¥100")).toBeNull();
+  });
+
   it("allows a trailing marker on a following-line total", () => {
     expect(extractTotalAmount("合計\n¥1,200※")).toBe(1200);
   });
