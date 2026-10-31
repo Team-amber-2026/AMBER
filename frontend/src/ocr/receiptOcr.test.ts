@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   calculateReceiptImageSize,
+  choosePreferredShopNameCandidate,
   extractPurchasedAt,
   extractShopName,
+  extractShopNameCandidate,
   extractTotalAmount,
   extractTotalCandidate,
   resolveFieldCandidate,
@@ -49,6 +51,24 @@ describe("receipt OCR field extraction", () => {
         { text: "Amber Market", confidence: 61, top: 0.12 },
       ]),
     ).toBe("Amber Market");
+  });
+
+  it("prefers the raw OCR shop name when a plausible full-text candidate exists", () => {
+    const rawText = [
+      { text: "アイリス商店", confidence: 92, top: 0.22 },
+      { text: "ありがとうございました", confidence: 98, top: 0.88 },
+    ];
+    const headerText = [
+      { text: "Thank you for shopping", confidence: 96, top: 0.18 },
+      { text: "アイリス商店", confidence: 64, top: 0.12 },
+    ];
+
+    expect(
+      choosePreferredShopNameCandidate(
+        [extractShopNameCandidate(rawText)],
+        extractShopNameCandidate(headerText),
+      ),
+    ).toEqual({ value: "アイリス商店", confidence: 92 });
   });
 
   it("uses the image position when OCR returns lines out of visual order", () => {
@@ -138,6 +158,10 @@ describe("receipt OCR field extraction", () => {
 
   it("ignores aggregate point totals that appear just after the total keyword", () => {
     expect(extractTotalAmount("合計 ¥1200\n合計ポイント 12")).toBe(1200);
+  });
+
+  it("keeps the real total when a point summary is appended after the amount", () => {
+    expect(extractTotalAmount("合計 ¥1200（ポイント利用 100）")).toBe(1200);
   });
 
   it("allows a trailing marker on a following-line total", () => {

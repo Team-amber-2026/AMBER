@@ -209,11 +209,14 @@ async function runReceiptOcrExclusive(
     const confidence = enhancedResult
       ? (originalResult.data.confidence + enhancedResult.data.confidence) / 2
       : originalResult.data.confidence;
-    const shopCandidate = resolveFieldCandidate([
+    const rawShopCandidate = resolveFieldCandidate([
       extractShopNameCandidate(originalLines),
       ...enhancedLines.length > 0 ? [extractShopNameCandidate(enhancedLines)] : [],
-      ...headerLines.length > 0 ? [extractShopNameCandidate(headerLines)] : [],
     ]);
+    const shopCandidate = choosePreferredShopNameCandidate(
+      [rawShopCandidate],
+      headerLines.length > 0 ? extractShopNameCandidate(headerLines) : undefined,
+    );
     const dateCandidate = resolveFieldCandidate([
       extractDateCandidate(originalText, originalLines, originalResult.data.confidence),
       ...(enhancedResult
@@ -308,7 +311,7 @@ export function extractShopName(lines: OCRLine[]) {
   return extractShopNameCandidate(lines).value;
 }
 
-function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> {
+export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> {
   const uniqueLineHeights = new Map<string, number>();
   for (const line of lines) {
     if (line.height && line.height > 0) {
@@ -363,6 +366,16 @@ function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<string> {
     value: selected.text.slice(0, 255),
     confidence: selected.confidence,
   };
+}
+
+export function choosePreferredShopNameCandidate(
+  rawCandidates: FieldCandidate<string>[],
+  fallbackCandidate?: FieldCandidate<string>,
+): FieldCandidate<string> {
+  const preferredRawCandidate = resolveFieldCandidate(rawCandidates);
+  return preferredRawCandidate.value !== null
+    ? preferredRawCandidate
+    : fallbackCandidate ?? { value: null, confidence: 0 };
 }
 
 export function resolveFieldCandidate<T extends string | number>(
@@ -567,8 +580,19 @@ function hasNonMonetaryAggregatePrefix(value: string, keywordIndex: number) {
 }
 
 function hasNonMonetaryAggregateSuffix(value: string, keywordIndex: number, keywordLength: number) {
-  const suffix = value.slice(keywordIndex + keywordLength);
-  return /(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(suffix);
+  const suffix = value.slice(keywordIndex + keywordLength).normalize("NFKC");
+  const amountMatches = [
+    ...suffix.matchAll(currencyAmountPattern),
+    ...suffix.matchAll(plainAmountPattern),
+  ];
+  const firstAmountIndex = amountMatches.length > 0
+    ? Math.min(...amountMatches.map((match) => match.index ?? 0))
+    : null;
+  const nonMonetaryMatch = suffix.match(/(?:ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i);
+  if (!nonMonetaryMatch || nonMonetaryMatch.index === undefined) {
+    return false;
+  }
+  return firstAmountIndex === null || nonMonetaryMatch.index < firstAmountIndex;
 }
 
 function isNonMonetaryTotalLine(value: string) {
