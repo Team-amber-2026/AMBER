@@ -22,6 +22,7 @@ const datePattern = /(?<year>20\d{2})\s*(?:\/|\.|年)\s*(?<month>\d{1,2})\s*(?:\
 const currencyAmountPattern = /(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)/gi;
 const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)(?![0-9A-Za-z])/g;
 const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?)/;
+const bareAmountLine = /^(?:[¥￥Y\\]\s*)?\d{1,3}(?:[,.]\s?\d{3})*(?:[,.]?\d+)?\s*(?:円)?$/;
 const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ)/;
 const maxReceiptImageSide = 2200;
 const maxReceiptImagePixels = 4_000_000;
@@ -480,7 +481,7 @@ export function extractTotalCandidate(
     }
 
     const nextLineText = nextLine.text.normalize("NFKC");
-    if (nonTotalAmountLine.test(nextLineText)) {
+    if (nonTotalAmountLine.test(nextLineText) || !bareAmountLine.test(nextLineText.trim())) {
       return [];
     }
 
@@ -506,7 +507,7 @@ export function extractTotalCandidate(
 
 export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
-  let latestTotalAmount: number | null = null;
+  let selectedTotalAmount: number | null = null;
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
@@ -517,20 +518,21 @@ export function extractTotalAmount(rawText: string) {
     const afterKeyword = line.slice(keywordMatch.index + keywordMatch[0].length);
     const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
     if (sameLineAmount !== null) {
-      latestTotalAmount = sameLineAmount;
+      selectedTotalAmount = sameLineAmount;
+      continue;
     }
 
     const nextLine = lines[index + 1];
-    if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine)) {
+    if (nextLine !== undefined && !nonTotalAmountLine.test(nextLine) && bareAmountLine.test(nextLine.trim())) {
       const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
       if (nextLineAmount !== null) {
-        latestTotalAmount = nextLineAmount;
+        selectedTotalAmount = nextLineAmount;
       }
     }
   }
 
-  if (latestTotalAmount !== null) {
-    return latestTotalAmount;
+  if (selectedTotalAmount !== null) {
+    return selectedTotalAmount;
   }
 
   for (const line of lines) {

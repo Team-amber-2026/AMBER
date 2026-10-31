@@ -128,6 +128,14 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount("小計 ¥1,000 合計 ¥1,200")).toBe(1200);
   });
 
+  it("does not let a later item amount override the same-line total", () => {
+    expect(extractTotalAmount("合計 ¥1200\n商品A ¥500")).toBe(1200);
+  });
+
+  it("does not treat a product line as the total when only the total label is on the previous line", () => {
+    expect(extractTotalAmount("合計\n商品A ¥50")).toBeNull();
+  });
+
   it("keeps the same-line total confidence and ignores unrelated next-line payment data", () => {
     expect(
       extractTotalCandidate(
