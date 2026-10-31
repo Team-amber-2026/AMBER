@@ -132,6 +132,14 @@ describe("receipt OCR field extraction", () => {
     expect(extractTotalAmount("合計 ¥1200\n商品A ¥500")).toBe(1200);
   });
 
+  it("ignores non-currency aggregate totals such as points before a valid final total", () => {
+    expect(extractTotalAmount("合計 ¥1200\n今回獲得ポイント合計 12")).toBe(1200);
+  });
+
+  it("allows a trailing marker on a following-line total", () => {
+    expect(extractTotalAmount("合計\n¥1,200※")).toBe(1200);
+  });
+
   it("does not treat a product line as the total when only the total label is on the previous line", () => {
     expect(extractTotalAmount("合計\n商品A ¥50")).toBeNull();
   });
@@ -148,6 +156,19 @@ describe("receipt OCR field extraction", () => {
         95,
       ),
     ).toEqual({ value: 1200, confidence: 98 });
+  });
+
+  it("accepts a following-line total with a trailing amount marker", () => {
+    expect(
+      extractTotalCandidate(
+        "合計\n¥1,200※",
+        [
+          { text: "合計", confidence: 95 },
+          { text: "¥1,200※", confidence: 90 },
+        ],
+        95,
+      ),
+    ).toEqual({ value: 1200, confidence: 90 });
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
