@@ -5,6 +5,7 @@ import {
   extractPurchasedAt,
   extractShopName,
   extractTotalAmount,
+  extractTotalCandidate,
   resolveFieldCandidate,
   toClientOCRResult,
 } from "./receiptOcr";
@@ -111,6 +112,30 @@ describe("receipt OCR field extraction", () => {
     ].join("\n");
 
     expect(extractTotalAmount(text)).toBe(746);
+  });
+
+  it("ignores a pre-discount subtotal when a final total is present", () => {
+    const text = [
+      "割引前商品合計 ¥2,500",
+      "割引 ¥500",
+      "合計 ¥2,000",
+    ].join("\n");
+
+    expect(extractTotalAmount(text)).toBe(2000);
+  });
+
+  it("keeps the same-line total confidence and ignores unrelated next-line payment data", () => {
+    expect(
+      extractTotalCandidate(
+        "合計 ¥1200\nお預り ¥5,050\nお釣り ¥4,304",
+        [
+          { text: "合計 ¥1200", confidence: 98 },
+          { text: "お預り ¥5,050", confidence: 90 },
+          { text: "お釣り ¥4,304", confidence: 20 },
+        ],
+        95,
+      ),
+    ).toEqual({ value: 1200, confidence: 98 });
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
