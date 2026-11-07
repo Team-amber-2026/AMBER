@@ -128,10 +128,10 @@ OCRで文字を読み取る
 |---|---|
 | フロントエンド | React + Vite |
 | バックエンド | Python / Django |
-| データベース | SQLite / PostgreSQL |
+| データベース | SQLite（ローカル開発の既定） / PostgreSQL（本番は Neon） |
 | 認証 | Django標準認証機能を利用したセッション認証 |
 | OCR | Tesseract.js（ブラウザ内のWebAssembly / Web Worker） |
-| デプロイ | Vercel（フロントエンド） / Render Web Service（バックエンド） / Render PostgreSQL |
+| デプロイ | Vercel（フロントエンド） → Render Web Service（Django API） → Neon（PostgreSQL） |
 
 ## 技術構成の理由
 
@@ -264,14 +264,14 @@ APIクライアントはJSONを厳密に解析します。設定不備などでH
 
 ### バックエンド: Render Web Service
 
-Render では `render.yaml` を使って Django API と Render PostgreSQL を定義します。
-実際の秘密情報や本番URLは Render Dashboard の Environment Variables で管理し、GitHub にはコミットしません。
+`render.yaml` は Django API の Render Web Service を定義します。Django は Render に設定された `DATABASE_URL` を使って Neon に接続します。
+接続文字列やシークレットキーは Render Dashboard の Environment Variables で管理し、GitHub にはコミットしません。
 
 | 環境変数 | 内容 |
 |---|---|
 | `SECRET_KEY` | Renderで生成、またはDashboardで設定 |
 | `DEBUG` | 本番では `False` |
-| `DATABASE_URL` | Render PostgreSQL の接続文字列 |
+| `DATABASE_URL` | Neon の本番ブランチ・データベースへの PostgreSQL 接続文字列 |
 | `ALLOWED_HOSTS` | `.onrender.com` または利用するバックエンドドメイン |
 | `FRONTEND_ORIGIN` | Vercel のフロントエンドURL |
 | `FRONTEND_PREVIEW_ORIGINS` | 検証対象PreviewのURL（カンマ区切り）。CORS / CSRF許可リストの既定値へ追加 |
@@ -309,26 +309,22 @@ Render では `render.yaml` を使って Django API と Render PostgreSQL を定
 - Mac Safari通常／プライベート、Chrome通常／シークレット、Edge通常／InPrivateのブラウザ・OSバージョンと、登録・ログイン・再読み込み・支出一覧・ログアウトの結果
 - APIステータス・レスポンスヘッダー・Cookie属性と有効期限・SPA直接アクセスの確認結果、および未確認項目と失敗時の再現手順
 
-Render Web Service と Render PostgreSQL が同じ workspace かつ同じ region にある場合は、PostgreSQL の internal connection string を使います。
-別 region や別 workspace の internal connection string は名前解決できないため、同じ region にそろえるか、必要に応じて external connection string を使います。
-
 ### OCR: 無課金のフロントエンド構成
 
 レシート画像はDjango APIへアップロードせず、Vercelで配信するReactアプリ上のTesseract.jsで解析します。日本語・英語の学習データは初回利用時にブラウザへダウンロードされ、以後はキャッシュが利用されます。OCR用API、共有画像ストレージ、Render Background Worker、外部OCR APIの利用料は不要です。
 
-複数画像を続けて解析するときは、同じWeb Workerを再利用します。認識は元画像の自動レイアウト解析と、グレースケール・コントラスト強調・自動回転を施した単一ブロック解析の2パスで行い、店名・購入日・合計金額を統合します。「合計」の文字が崩れた場合は、税込対象額や繰り返し出現する通貨額から合計候補を補完します。
+複数画像を続けて解析するときは、同じWeb Workerを再利用します。選択した画像範囲をブラウザ内で解析し、元画像・前処理後の画像・ヘッダーの認識結果から店名・購入日・合計金額を抽出します。詳しくは [レシート読み取りの仕様](docs/レシート読み取り.md) を参照してください。
 
-認識した店名・購入日・合計金額・OCR全文と信頼度だけを、ユーザーが内容を確認して支出を保存するときにDjango APIへ送信します。レシート画像そのものは送信・保存しません。信頼度が70%未満の場合は、入力値とレシート画像の照合を促す警告を表示します。
+ユーザーが内容を確認して支出を保存するときに、確認済みの支出データとOCR結果をDjango APIへ送信します。レシート画像そのものは送信・保存しません。店名・購入日・合計金額の候補がないか信頼度が70%未満の場合は、該当項目とレシート画像の照合を促します。
 
 初回の学習データ取得にはネットワーク接続が必要です。初回から完全オフラインにする場合は、Tesseract.jsのWorker、WASM、`jpn` / `eng`の`traineddata`を自サイトから配信する構成へ変更してください。
 
-### Render PostgreSQL 接続確認
+### Neon PostgreSQL の設定と本番確認
 
-- Web Service と PostgreSQL が同じ Render workspace にあること
-- Web Service と PostgreSQL が同じ region にあること
-- `DATABASE_URL` が古いDBや別regionの internal URL を指していないこと
-- Blueprintを使う場合は `render.yaml` の `fromDatabase` から `DATABASE_URL` を設定していること
-- Dashboardで手動設定する場合は、接続文字列を再コピーして保存後に再デプロイすること
+1. [Neon の接続ガイド](https://neon.com/docs/connect/connect-from-any-app) に沿って、Neon Console の **Connect** で本番ブランチ・データベース・ロールを選び、接続文字列を確認します。TLS の接続オプション（`sslmode=require` など）は保持します。
+2. Render の本番 Web Service の **Environment** で、`DATABASE_URL` がその Neon 本番ブランチ・データベースを指すことを確認します。`render.yaml` では `sync: false` のため、値は Render 側で設定し、変更した場合は再デプロイします。ローカル開発では `DATABASE_URL` が未設定なら SQLite を使用します。
+3. 本番サイトでテスト用アカウントを使って支出を保存し、ページを再読み込みしても支出一覧に表示されることを確認します。
+4. 認証・OCRも確認したら、[Issue #30](https://github.com/Team-amber-2026/AMBER/issues/30) に Vercel・Render の反映コミットと確認結果を記録します。DB接続については「Neon本番DBへの接続確認済み」とだけ記載し、接続文字列は記載しません。
 
 ### 5. マイグレーションを実行
 

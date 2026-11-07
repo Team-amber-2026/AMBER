@@ -256,8 +256,8 @@ OCRで文字を読み取る
 
 | 要件ID | 要件 | 内容 |
 |---|---|---|
-| NF-OPS-01 | デプロイ | Vercel上でフロントエンド、Render上でバックエンドとDBを公開する |
-| NF-OPS-02 | 環境変数管理 | `.env` やRenderのEnvironment Variablesで設定値を管理する |
+| NF-OPS-01 | デプロイ | フロントエンドを Vercel、Django API を Render Web Service で稼働させ、Django API から Neon の PostgreSQL に接続する |
+| NF-OPS-02 | 環境変数管理 | ローカル開発は `.env`、本番は Vercel と Render の環境変数で管理する。`DATABASE_URL` は Render にのみ設定する |
 | NF-OPS-03 | エラー表示 | OCR失敗、通信失敗、保存失敗時にユーザーへ通知する |
 | NF-OPS-04 | サンプルデータ | 発表時は個人情報を含まないサンプルレシートを使用する |
 
@@ -358,11 +358,11 @@ GET /api/summary/monthly/?year=2026&month=5
 | フロントエンド | React + Vite |
 | バックエンド | Python / Django |
 | API | Django REST Framework |
-| データベース | SQLite / PostgreSQL |
+| データベース | SQLite（ローカル開発の既定） / PostgreSQL（本番は Neon） |
 | 認証 | Django標準認証機能を利用したセッション認証 |
 | OCR | Tesseract.js（WebAssembly / Web Worker） |
 | 画像保存 | OCR画像は保存しない |
-| デプロイ | Vercel / Render Web Service / Render PostgreSQL |
+| デプロイ | Vercel（フロントエンド） → Render Web Service（Django API） → Neon（PostgreSQL） |
 
 ---
 
@@ -371,19 +371,13 @@ GET /api/summary/monthly/?year=2026&month=5
 ### 15.1 構成
 
 ```text
-ユーザーのスマホ / PC
- ↓
-React + Vite
-Vercel
- ↓
-Tesseract.js
-ブラウザ内OCR処理
- ↓ 確認済みデータのみ
-Django API
-Render Web Service
- ↓
-PostgreSQL
-Render Managed DB
+ユーザーのスマホ / PC（Tesseract.js でブラウザ内OCR）
+ ↓ 同一オリジンの /api/* にリクエスト（OCR保存時は確認済みの支出データとOCR結果）
+Vercel（React + Vite の配信・API Rewrite）
+ ↓ API リクエストを転送
+Render Web Service（Django API）
+ ↓ DATABASE_URL で接続
+Neon（本番 PostgreSQL）
 ```
 
 ### 15.2 環境変数
@@ -392,8 +386,8 @@ Render Managed DB
 |---|---|
 | SECRET_KEY | Djangoのシークレットキー |
 | DEBUG | 開発環境ではTrue、本番環境ではFalse |
-| DATABASE_URL | DB接続情報 |
-| VITE_API_BASE_URL | フロントエンドから呼び出すDjango APIのベースURL |
+| DATABASE_URL | Neon の本番ブランチ・データベースへの接続文字列。Render の環境変数で管理し、ローカル開発では未設定なら SQLite を使用する |
+| VITE_API_BASE_URL | Vercel では `/api`。ローカル開発時は開発用APIのURLを指定できる |
 | CORS_ALLOWED_ORIGINS | フロントエンドのURL |
 | CSRF_TRUSTED_ORIGINS | CSRFを許可するURL |
 
@@ -510,7 +504,7 @@ Render Managed DB
 - 支出一覧を表示できる
 - 今月の支出合計を表示できる
 - カテゴリー別集計を表示できる
-- Vercel / Render上にデプロイし、スマホ実機からアクセスできる
+- Vercel の本番サイトにスマホ実機からアクセスでき、Render の Django API 経由で Neon に保存したテスト用支出が再読み込み後も一覧に表示される
 
 ---
 
