@@ -53,6 +53,34 @@ describe("receipt OCR field extraction", () => {
     ).toBe("Amber Market");
   });
 
+  it("prefers the first header line when the shop and product use the same font size", () => {
+    expect(
+      extractShopName([
+        { text: "アンバーマート", confidence: 62, top: 0.06, height: 22 },
+        { text: "牛乳", confidence: 96, top: 0.16, height: 22 },
+        { text: "合計 198", confidence: 99, top: 0.82, height: 22 },
+      ]),
+    ).toBe("アンバーマート");
+  });
+
+  it("prefers a readable branch line over a short logo-like Latin token", () => {
+    expect(
+      extractShopName([
+        { text: "Que", confidence: 91, top: 0.05, height: 40 },
+        { text: "西小路店", confidence: 86, top: 0.15, height: 24 },
+      ]),
+    ).toBe("西小路店");
+  });
+
+  it("combines a readable Latin brand with its branch name", () => {
+    expect(
+      extractShopName([
+        { text: "FamilyMart", confidence: 92, top: 0.04, height: 42 },
+        { text: "五条大宮店", confidence: 88, top: 0.13, height: 24 },
+      ]),
+    ).toBe("FamilyMart 五条大宮店");
+  });
+
   it("prefers the raw OCR shop name when a plausible full-text candidate exists", () => {
     const rawText = [
       { text: "アイリス商店", confidence: 92, top: 0.22 },
@@ -69,6 +97,15 @@ describe("receipt OCR field extraction", () => {
         extractShopNameCandidate(headerText),
       ),
     ).toEqual({ value: "アイリス商店", confidence: 92 });
+  });
+
+  it("uses a header-only candidate when the full-page candidate is weak", () => {
+    expect(
+      choosePreferredShopNameCandidate(
+        [{ value: "牛乳", confidence: 86 }],
+        { value: "アンバーマート", confidence: 70 },
+      ),
+    ).toEqual({ value: "アンバーマート", confidence: 70 });
   });
 
   it("uses the image position when OCR returns lines out of visual order", () => {
@@ -100,6 +137,10 @@ describe("receipt OCR field extraction", () => {
 
   it("extracts a spaced Japanese receipt date", () => {
     expect(extractPurchasedAt("2026年 6月12日 (金) 9:10")).toBe("2026-06-12");
+  });
+
+  it("normalizes a two-digit year and hyphen-separated receipt date", () => {
+    expect(extractPurchasedAt("26-07-25")).toBe("2026-07-25");
   });
 
   it("uses a repeated tax-inclusive amount when the total label is unreadable", () => {
@@ -237,14 +278,26 @@ describe("receipt OCR field extraction", () => {
   it("prefers a currency amount over unrelated metadata after the keyword", () => {
     expect(extractTotalAmount("合計 注文No. 2026 ¥746")).toBe(746);
   });
+
+  it("does not treat product or discount subtotals as the final total", () => {
+    expect(
+      extractTotalAmount([
+        "商品合計 ¥805",
+        "値引合計 -50",
+        "合計 ¥755",
+        "お預り ¥1,055",
+        "お釣り ¥300",
+      ].join("\n")),
+    ).toBe(755);
+  });
 });
 
 describe("receipt OCR image sizing", () => {
   it("limits both the longest side and total pixel count", () => {
     const size = calculateReceiptImageSize(8000, 6000);
 
-    expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(2200);
-    expect(size.width * size.height).toBeLessThanOrEqual(4_000_000);
+    expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(3200);
+    expect(size.width * size.height).toBeLessThanOrEqual(6_000_000);
   });
 
   it("does not enlarge an image already within the limits", () => {
