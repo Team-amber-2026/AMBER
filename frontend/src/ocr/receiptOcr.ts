@@ -196,6 +196,8 @@ async function runReceiptOcrExclusive(
         worker.recognize(binaryImage, {}, { text: true, blocks: true }),
         signal,
       );
+      releaseReceiptCanvas(binaryImage);
+      binaryImage = null;
     } catch (error) {
       if (signal?.aborted) {
         throw signal.reason ?? error;
@@ -317,6 +319,10 @@ async function runReceiptOcrExclusive(
         invertedHeaderImage?.height ?? 0,
       )
       : [];
+    releaseReceiptCanvas(headerImage);
+    releaseReceiptCanvas(invertedHeaderImage);
+    headerImage = null;
+    invertedHeaderImage = null;
     let focusedBodyText = "";
     let focusedBodyLines: OCRLine[] = [];
     let focusedBodyConfidence = 0;
@@ -351,6 +357,8 @@ async function runReceiptOcrExclusive(
           ...line,
           top: 0.18 + (line.top ?? 0) * 0.65,
         }));
+        releaseReceiptCanvas(focusedBodyImage);
+        focusedBodyImage = null;
       } catch (error) {
         if (signal?.aborted) {
           throw signal.reason ?? error;
@@ -473,6 +481,8 @@ async function runReceiptOcrExclusive(
           focusedTotalText,
           focusedTotalImage.height,
         );
+        releaseReceiptCanvas(focusedTotalImage);
+        focusedTotalImage = null;
         totalCandidate = resolveReceiptFieldCandidate([
           ...totalCandidateEntries,
           {
@@ -555,6 +565,14 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
     throw signal.reason ?? new DOMException("OCR解析を中止しました。", "AbortError");
   }
+}
+
+function releaseReceiptCanvas(canvas: HTMLCanvasElement | null) {
+  if (!canvas) {
+    return;
+  }
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 function chooseRawOcrText(candidates: Array<{ text: string; confidence: number }>) {
