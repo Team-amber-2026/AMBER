@@ -600,12 +600,13 @@ export function shouldReanalyzeReceiptBody(lineSets: OCRLine[][]) {
     return true;
   }
 
-  const maxLineCount = Math.max(...availableSets.map((lines) => lines.length));
+  const bodySets = availableSets.map((lines) => lines.filter(isReceiptBodyLine));
+  const maxLineCount = Math.max(...bodySets.map((lines) => lines.length));
   const maxCurrencyCount = Math.max(
-    ...availableSets.map((lines) => countReceiptCurrencyTokens(lines.map((line) => line.text))),
+    ...bodySets.map((lines) => countReceiptCurrencyTokens(lines.map((line) => line.text))),
   );
   const maxProductRowCount = Math.max(
-    ...availableSets.map((lines) => lines.filter(isReceiptProductLine).length),
+    ...bodySets.map((lines) => lines.filter(isReceiptProductLine).length),
   );
 
   // A page can contain many metadata/tax lines and still omit every product
@@ -614,7 +615,14 @@ export function shouldReanalyzeReceiptBody(lineSets: OCRLine[][]) {
   return maxLineCount < 10 || maxCurrencyCount < 3 || maxProductRowCount === 0;
 }
 
+function isReceiptBodyLine(line: OCRLine) {
+  return line.top === undefined || (line.top >= 0.18 && line.top <= 0.83);
+}
+
 function isReceiptProductLine(line: OCRLine) {
+  if (!isReceiptBodyLine(line)) {
+    return false;
+  }
   const normalized = line.text.normalize("NFKC").trim();
   if (!normalized || totalKeywords.test(normalized)) {
     return false;
