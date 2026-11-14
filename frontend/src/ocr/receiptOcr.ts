@@ -22,7 +22,7 @@ export type ReceiptImageCrop = {
 };
 
 const totalKeywords = /(?:合\s*(?:計|言\s*[十ニ二])|言\s*[十ニ二]|お\s*買\s*上(?:げ)?\s*金\s*額|ご\s*請\s*求\s*額|現\s*計|総\s*額)/;
-const datePattern = /(?<year>20\d{2}|\d{2})\s*(?:\/|\.|-|年)\s*(?<month>\d{1,2})\s*(?:\/|\.|-|月)\s*(?<day>\d{1,2})(?:日)?/;
+const datePattern = /(?<!\d)(?<year>20\d{2}|\d{2})\s*(?:\/|\.|-|年)\s*(?<month>\d{1,2})\s*(?:\/|\.|-|月)\s*(?<day>\d{1,2})(?:日)?(?!\d)/;
 const currencyAmountPattern = /(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)/gi;
 const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)(?![0-9A-Za-z])/g;
 const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?|ポイント|マイル|残\s*高|獲\s*得|利用|使用|還\s*元|加\s*算)/;
@@ -62,7 +62,7 @@ function getWorker() {
           recognitionPass === 6 ? 0.87 : 0.93;
         progressListener?.({
           ...message,
-          progress: offset + message.progress * 0.2,
+          progress: Math.min(1, Math.max(0, offset + Math.min(1, Math.max(0, message.progress)) * 0.2)),
         });
       },
     }).catch((error) => {
@@ -320,12 +320,7 @@ async function runReceiptOcrExclusive(
     let focusedBodyText = "";
     let focusedBodyLines: OCRLine[] = [];
     let focusedBodyConfidence = 0;
-    const initialCurrencyCount = countReceiptCurrencyTokens([
-      originalText,
-      enhancedText,
-      binaryText,
-    ]);
-    if (Math.max(originalLines.length, enhancedLines.length, binaryLines.length) < 10 || initialCurrencyCount < 3) {
+    if (shouldReanalyzeReceiptBody([originalLines, enhancedLines, binaryLines])) {
       try {
         focusedBodyImage = await prepareReceiptRegion(
           image,
@@ -377,7 +372,7 @@ async function runReceiptOcrExclusive(
         }
       }
     }
-    const rawText = chooseRawOcrText([
+    const baseRawText = chooseRawOcrText([
       { text: originalText, confidence: originalResult.data.confidence },
       ...(enhancedResult
         ? [{ text: enhancedText, confidence: enhancedResult.data.confidence }]
@@ -386,6 +381,13 @@ async function runReceiptOcrExclusive(
         ? [{ text: binaryText, confidence: binaryResult.data.confidence }]
         : []),
     ]);
+    // Add only product rows missing from the selected full-page pass. The
+    // line-level deduplication keeps the focused pass from reintroducing the
+    // duplicate receipt text that the UI previously showed.
+    const rawText = mergeReceiptOcrText(
+      baseRawText,
+      focusedBodyLines.filter(isReceiptProductLine).map((line) => line.text),
+    );
     const fullPageConfidences = [
       originalResult.data.confidence,
       ...(enhancedResult ? [enhancedResult.data.confidence] : []),
@@ -590,6 +592,100 @@ function countReceiptCurrencyTokens(texts: string[]) {
     (count, text) => count + (text.match(/(?:¥|￥|\\|Y)\s*[0-9]/gi)?.length ?? 0),
     0,
   );
+}
+
+export function shouldReanalyzeReceiptBody(lineSets: OCRLine[][]) {
+  const availableSets = lineSets.filter((lines) => lines.length > 0);
+  if (availableSets.length === 0) {
+    return true;
+  }
+
+  const maxLineCount = Math.max(...availableSets.map((lines) => lines.length));
+  const maxCurrencyCount = Math.max(
+    ...availableSets.map((lines) => countReceiptCurrencyTokens(lines.map((line) => line.text))),
+  );
+  const maxProductRowCount = Math.max(
+    ...availableSets.map((lines) => lines.filter(isReceiptProductLine).length),
+  );
+
+  // A page can contain many metadata/tax lines and still omit every product
+  // name. Require at least one plausible product + amount row before skipping
+  // the high-resolution body pass.
+  return maxLineCount < 10 || maxCurrencyCount < 3 || maxProductRowCount === 0;
+}
+
+function isReceiptProductLine(line: OCRLine) {
+  const normalized = line.text.normalize("NFKC").trim();
+  if (!normalized || totalKeywords.test(normalized)) {
+    return false;
+  }
+  if (/(?:商品合計|値引合計|値引き|小計|お預り|おつり|消費税|内消費税|税率|対象|点数)/.test(normalized)) {
+    return false;
+  }
+
+  const textWithoutAmounts = normalized
+    .replace(currencyAmountPattern, " ")
+    .replace(plainAmountPattern, " ")
+    .replace(/[※*()（）\[\]【】%％:：=＝\\¥￥Y軽減税率対]/g, " ")
+    .replace(/\s+/g, "")
+    .trim();
+  return textWithoutAmounts.length >= 2 &&
+    /[A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(textWithoutAmounts) &&
+    extractCurrencyAmounts(normalized).length > 0;
+}
+
+export function mergeReceiptOcrText(baseText: string, supplementalLines: string[]) {
+  const result = baseText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const supplementalLine of supplementalLines) {
+    const line = supplementalLine.trim();
+    if (!line || result.some((existingLine) => areSimilarReceiptLines(existingLine, line))) {
+      continue;
+    }
+    result.push(line);
+  }
+
+  return result.join("\n");
+}
+
+function areSimilarReceiptLines(left: string, right: string) {
+  const normalizedLeft = normalizeReceiptLine(left);
+  const normalizedRight = normalizeReceiptLine(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  if (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  ) {
+    return true;
+  }
+
+  const leftAmounts = extractCurrencyAmounts(left);
+  const rightAmounts = extractCurrencyAmounts(right);
+  const sharedAmount = leftAmounts.some((amount) => rightAmounts.includes(amount));
+  if (!sharedAmount) {
+    return false;
+  }
+
+  const leftName = normalizedLeft.replace(/\d+/g, "");
+  const rightName = normalizedRight.replace(/\d+/g, "");
+  return levenshteinDistance(leftName, rightName) <= Math.max(
+    2,
+    Math.floor(Math.min(leftName.length, rightName.length) * 0.2),
+  );
+}
+
+function normalizeReceiptLine(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/\s+/g, "")
+    .replace(/[^A-Za-z0-9ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/g, "")
+    .toLocaleLowerCase();
 }
 
 export type OCRLine = {
@@ -1475,7 +1571,7 @@ function binarizeReceiptImage(canvas: HTMLCanvasElement) {
 
   const threshold = findOtsuThreshold(histogram, grayscale.length);
   for (let pixelIndex = 0; pixelIndex < grayscale.length; pixelIndex += 1) {
-    const value = grayscale[pixelIndex] < threshold ? 0 : 255;
+    const value = grayscale[pixelIndex] <= threshold ? 0 : 255;
     const index = pixelIndex * 4;
     pixels[index] = value;
     pixels[index + 1] = value;

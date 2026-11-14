@@ -8,7 +8,9 @@ import {
   extractShopNameCandidate,
   extractTotalAmount,
   extractTotalCandidate,
+  mergeReceiptOcrText,
   resolveFieldCandidate,
+  shouldReanalyzeReceiptBody,
   toClientOCRResult,
 } from "./receiptOcr";
 
@@ -141,6 +143,11 @@ describe("receipt OCR field extraction", () => {
 
   it("normalizes a two-digit year and hyphen-separated receipt date", () => {
     expect(extractPurchasedAt("26-07-25")).toBe("2026-07-25");
+  });
+
+  it("does not extract a date from the middle of a telephone number", () => {
+    expect(extractPurchasedAt("TEL 0120-12-1234")).toBeNull();
+    expect(extractPurchasedAt("TEL 0120-12-1234\n26-07-25")).toBe("2026-07-25");
   });
 
   it("uses a repeated tax-inclusive amount when the total label is unreadable", () => {
@@ -289,6 +296,36 @@ describe("receipt OCR field extraction", () => {
         "お釣り ¥300",
       ].join("\n")),
     ).toBe(755);
+  });
+
+  it("re-runs the body pass when metadata exists but product rows are missing", () => {
+    const lines = Array.from({ length: 10 }, (_, index) => ({
+      text: index < 3 ? `¥${index + 1}00` : "登録番号 metadata",
+      confidence: 90,
+      top: 0.2 + index * 0.03,
+    }));
+    expect(shouldReanalyzeReceiptBody([lines])).toBe(true);
+  });
+
+  it("does not re-run the body pass when product rows are present", () => {
+    const lines = [
+      { text: "テリヤキチキンとたまご ¥348", confidence: 90, top: 0.3 },
+      { text: "野菜生活マンゴーサラダ ¥135", confidence: 90, top: 0.35 },
+      { text: "3種のミックスサンド ¥322", confidence: 90, top: 0.4 },
+      ...Array.from({ length: 7 }, () => ({
+        text: "案内文",
+        confidence: 90,
+        top: 0.5,
+      })),
+    ];
+    expect(shouldReanalyzeReceiptBody([lines])).toBe(false);
+  });
+
+  it("merges only missing focused product rows without duplicating existing lines", () => {
+    expect(mergeReceiptOcrText(
+      "テリヤキチキンとたまご ¥348\n合計 ¥755",
+      ["テリヤキチキンとたまご ¥348", "野菜生活マンゴーサラダ ¥135"],
+    )).toBe("テリヤキチキンとたまご ¥348\n合計 ¥755\n野菜生活マンゴーサラダ ¥135");
   });
 });
 
