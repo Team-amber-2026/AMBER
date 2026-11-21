@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   calculateReceiptImageSize,
@@ -10,9 +10,17 @@ import {
   extractTotalCandidate,
   mergeReceiptOcrText,
   resolveFieldCandidate,
+  runReceiptOcr,
   shouldReanalyzeReceiptBody,
   toClientOCRResult,
 } from "./receiptOcr";
+
+const { recognize } = vi.hoisted(() => ({ recognize: vi.fn() }));
+
+vi.mock("tesseract.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("tesseract.js")>(),
+  createWorker: vi.fn(async () => ({ recognize, setParameters: vi.fn(async () => undefined) })),
+}));
 
 describe("receipt OCR field extraction", () => {
   it("prefers a candidate supported by multiple recognition passes", () => {
@@ -241,7 +249,7 @@ describe("receipt OCR field extraction", () => {
         ],
         95,
       ),
-    ).toEqual({ value: 1200, confidence: 98 });
+    ).toEqual({ value: 1200, confidence: 98, evidence: "labeledTotal" });
   });
 
   it("accepts a following-line total with a trailing amount marker", () => {
@@ -254,7 +262,22 @@ describe("receipt OCR field extraction", () => {
         ],
         95,
       ),
-    ).toEqual({ value: 1200, confidence: 90 });
+    ).toEqual({ value: 1200, confidence: 90, evidence: "labeledTotal" });
+  });
+
+  it("keeps labeled evidence when only the raw text contains the total label", () => {
+    expect(extractTotalCandidate("合計 ¥755", [{ text: "¥755", confidence: 90 }], 82))
+      .toEqual({ value: 755, confidence: 82, evidence: "labeledTotal" });
+  });
+
+  it("marks a repeated product price as inferred evidence", () => {
+    const lines = [
+      { text: "牛乳 ¥198", confidence: 80 },
+      { text: "チーズ ¥198", confidence: 80 },
+    ];
+    const text = lines.map((line) => line.text).join("\n");
+    expect(extractTotalCandidate(text, lines, 80))
+      .toEqual({ value: 198, confidence: 60, evidence: "inferredTotal" });
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
@@ -326,6 +349,96 @@ describe("receipt OCR field extraction", () => {
       "テリヤキチキンとたまご ¥348\n合計 ¥755",
       ["テリヤキチキンとたまご ¥348", "野菜生活マンゴーサラダ ¥135"],
     )).toBe("テリヤキチキンとたまご ¥348\n合計 ¥755\n野菜生活マンゴーサラダ ¥135");
+  });
+
+  it.each([
+    ["牛乳 ¥198", "豆乳 ¥198"],
+    ["牛乳500ml ¥198", "牛乳1000ml ¥198"],
+    ["牛乳 1個 ¥198", "牛乳 2個 ¥198"],
+    ["牛乳 ¥198 1個", "牛乳 ¥198 2個"],
+    ["牛乳 198", "牛乳 1,980"],
+  ])("keeps separate product rows: %s and %s", (base, supplemental) => {
+    expect(mergeReceiptOcrText(base, [supplemental])).toBe(`${base}\n${supplemental}`);
+  });
+
+  it("deduplicates the same product across inline and split price formats", () => {
+    expect(mergeReceiptOcrText("牛乳５００ｍｌ\n￥１，９８０", ["牛 乳500ml 1980"]))
+      .toBe("牛乳５００ｍｌ\n￥１，９８０");
+  });
+
+  it("does not append totals, receipt metadata, or unpaired amounts as products", () => {
+    expect(mergeReceiptOcrText("牛乳 ¥198", [
+      "¥100", "合計", "¥1,200", "登録番号 T1234567890123", "250", "お預り 2000",
+    ])).toBe("牛乳 ¥198");
+  });
+});
+
+describe("receipt OCR recognition passes", () => {
+  afterEach(() => {
+    recognize.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  function mockReceiptImage() {
+    vi.stubGlobal("createImageBitmap", async () => ({ width: 200, height: 400, close: vi.fn() }));
+    vi.stubGlobal("document", {
+      createElement: () => {
+        const data = new Uint8ClampedArray([0, 0, 0, 255, 255, 255, 255, 255]);
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            drawImage: vi.fn(),
+            getImageData: () => ({ data }),
+            putImageData: vi.fn(),
+          }),
+        };
+      },
+    });
+    return new File([], "receipt.png", { type: "image/png" });
+  }
+
+  it("supplements product rows and prefers the labeled total from the focused pass", async () => {
+    const image = mockReceiptImage();
+    const text = "TEL 0120-12-1234\n牛乳 ¥198\nチーズ ¥198\n26-07-25";
+    const pixels: number[][] = [];
+    const fullPagePass = async (canvas: HTMLCanvasElement) => {
+      const data = canvas.getContext("2d")!.getImageData(0, 0, 2, 1).data;
+      pixels.push([data[0], data[4]]);
+      return { data: { text, confidence: 80 } };
+    };
+    // Supply the focused results after the full-page and header passes.
+    for (let pass = 0; pass < 5; pass += 1) {
+      recognize.mockImplementationOnce(fullPagePass);
+    }
+    recognize
+      .mockResolvedValueOnce({
+        data: { text: "豆乳 ¥198\n食パン 159\n果汁\n¥200\n米菓\n110", confidence: 100 },
+      })
+      .mockResolvedValueOnce({ data: { text: "合計 ¥755", confidence: 100 } });
+
+    const result = await runReceiptOcr(image);
+
+    expect(result.purchased_at).toBe("2026-07-25");
+    expect(pixels[2]).toEqual([0, 255]);
+    expect(pixels[4]).toEqual([255, 0]);
+    expect(result).toMatchObject({
+      raw_ocr_text: `${text}\n豆乳 ¥198\n食パン 159\n果汁\n¥200\n米菓\n110`,
+      total_amount: 755,
+    });
+  });
+
+  it("runs the focused total pass when all high-confidence totals are inferred", async () => {
+    const image = mockReceiptImage();
+    recognize.mockResolvedValue({ data: { text: "合計\n¥755", confidence: 100 } });
+    for (let pass = 0; pass < 6; pass += 1) {
+      recognize.mockResolvedValueOnce({ data: { text: "牛乳 ¥198\nチーズ ¥198", confidence: 100 } });
+    }
+
+    const result = await runReceiptOcr(image);
+
+    expect(recognize).toHaveBeenCalledTimes(7);
+    expect(result.total_amount).toBe(755);
   });
 });
 

@@ -8,7 +8,11 @@ import {
 } from "../utils/serialTaskQueue";
 
 type ProgressListener = (message: LoggerMessage) => void;
-type FieldCandidate<T> = { value: T | null; confidence: number };
+type FieldCandidate<T> = {
+  value: T | null;
+  confidence: number;
+  evidence?: "labeledTotal" | "inferredTotal";
+};
 type ReceiptCandidate<T> = {
   candidate: FieldCandidate<T>;
   fromHeader?: boolean;
@@ -392,10 +396,7 @@ async function runReceiptOcrExclusive(
     // Add only product rows missing from the selected full-page pass. The
     // line-level deduplication keeps the focused pass from reintroducing the
     // duplicate receipt text that the UI previously showed.
-    const rawText = mergeReceiptOcrText(
-      baseRawText,
-      focusedBodyLines.filter(isReceiptProductLine).map((line) => line.text),
-    );
+    const rawText = mergeReceiptOcrText(baseRawText, getReceiptBodyTexts(focusedBodyLines));
     const fullPageConfidences = [
       originalResult.data.confidence,
       ...(enhancedResult ? [enhancedResult.data.confidence] : []),
@@ -447,11 +448,10 @@ async function runReceiptOcrExclusive(
     ];
     let totalCandidate = resolveReceiptFieldCandidate(totalCandidateEntries);
 
-    // Only pay for a high-resolution total pass when the full-page passes do
-    // not agree or produce a weak candidate. The source crop is intentionally
-    // created from the original file, not the resized full-page canvas.
+    // Re-read the total from the source image when no pass found a labeled
+    // total, when confidence is low, or when passes disagree.
     if (
-      totalCandidate.value === null ||
+      !totalCandidateEntries.some(({ candidate }) => candidate.evidence === "labeledTotal") ||
       totalCandidate.confidence < 75 ||
       hasCandidateDisagreement(totalCandidateEntries)
     ) {
@@ -618,13 +618,11 @@ export function shouldReanalyzeReceiptBody(lineSets: OCRLine[][]) {
     return true;
   }
 
-  const bodySets = availableSets.map((lines) => lines.filter(isReceiptBodyLine));
-  const maxLineCount = Math.max(...bodySets.map((lines) => lines.length));
-  const maxCurrencyCount = Math.max(
-    ...bodySets.map((lines) => countReceiptCurrencyTokens(lines.map((line) => line.text))),
-  );
+  const bodySets = availableSets.map(getReceiptBodyTexts);
+  const maxLineCount = Math.max(...bodySets.map((lines) => lines.filter(Boolean).length));
+  const maxCurrencyCount = Math.max(...bodySets.map(countReceiptCurrencyTokens));
   const maxProductRowCount = Math.max(
-    ...bodySets.map((lines) => lines.filter(isReceiptProductLine).length),
+    ...bodySets.map((lines) => extractReceiptProductRows(lines).length),
   );
 
   // A page can contain many metadata/tax lines and still omit every product
@@ -633,85 +631,85 @@ export function shouldReanalyzeReceiptBody(lineSets: OCRLine[][]) {
   return maxLineCount < 10 || maxCurrencyCount < 3 || maxProductRowCount === 0;
 }
 
-function isReceiptBodyLine(line: OCRLine) {
-  return line.top === undefined || (line.top >= 0.18 && line.top <= 0.83);
-}
-
-function isReceiptProductLine(line: OCRLine) {
-  if (!isReceiptBodyLine(line)) {
-    return false;
-  }
-  const normalized = line.text.normalize("NFKC").trim();
-  if (!normalized || totalKeywords.test(normalized)) {
-    return false;
-  }
-  if (/(?:商品合計|値引合計|値引き|小計|お預り|おつり|消費税|内消費税|税率|対象|点数)/.test(normalized)) {
-    return false;
-  }
-
-  const textWithoutAmounts = normalized
-    .replace(currencyAmountPattern, " ")
-    .replace(plainAmountPattern, " ")
-    .replace(/[※*()（）\[\]【】%％:：=＝\\¥￥Y軽減税率対]/g, " ")
-    .replace(/\s+/g, "")
-    .trim();
-  return textWithoutAmounts.length >= 2 &&
-    /[A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(textWithoutAmounts) &&
-    extractCurrencyAmounts(normalized).length > 0;
-}
-
-export function mergeReceiptOcrText(baseText: string, supplementalLines: string[]) {
-  const result = baseText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  for (const supplementalLine of supplementalLines) {
-    const line = supplementalLine.trim();
-    if (!line || result.some((existingLine) => areSimilarReceiptLines(existingLine, line))) {
-      continue;
-    }
-    result.push(line);
-  }
-
-  return result.join("\n");
-}
-
-function areSimilarReceiptLines(left: string, right: string) {
-  const normalizedLeft = normalizeReceiptLine(left);
-  const normalizedRight = normalizeReceiptLine(right);
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-  if (
-    normalizedLeft === normalizedRight ||
-    normalizedLeft.includes(normalizedRight) ||
-    normalizedRight.includes(normalizedLeft)
-  ) {
-    return true;
-  }
-
-  const leftAmounts = extractCurrencyAmounts(left);
-  const rightAmounts = extractCurrencyAmounts(right);
-  const sharedAmount = leftAmounts.some((amount) => rightAmounts.includes(amount));
-  if (!sharedAmount) {
-    return false;
-  }
-
-  const leftName = normalizedLeft.replace(/\d+/g, "");
-  const rightName = normalizedRight.replace(/\d+/g, "");
-  return levenshteinDistance(leftName, rightName) <= Math.max(
-    2,
-    Math.floor(Math.min(leftName.length, rightName.length) * 0.2),
+function getReceiptBodyTexts(lines: OCRLine[]) {
+  // Leave gaps so product names and amounts cannot pair across excluded lines.
+  return lines.map(({ text, top }) =>
+    top === undefined || (top >= 0.18 && top <= 0.83) ? text : "",
   );
 }
 
-function normalizeReceiptLine(value: string) {
-  return value
-    .normalize("NFKC")
-    .replace(/\s+/g, "")
-    .replace(/[^A-Za-z0-9ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/g, "")
-    .toLocaleLowerCase();
+function isReceiptProductName(name: string) {
+  return name.length >= 2 &&
+    /[A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(name) &&
+    !totalKeywords.test(name) &&
+    !/(?:値引き|小計|消費税|税率|対象|点数)/.test(name) &&
+    !/^(?:TEL\b|FAX\b|電話|現金|お?預[りか]|お?釣り|おつり|郵便番号|取引番号|登録番号|領収[書証]$|レシート$)/i.test(name) &&
+    !/^\d+\s*(?:個|点|品|件)$/.test(name) &&
+    !extractPurchasedAt(name);
+}
+
+function parseReceiptProductPrice(text: string) {
+  const markedPrice = [...text.matchAll(/(?:[¥\\]|(?<![A-Za-z])Y)\s*(\d{1,3}(?:[,.]\s?\d{3})+|\d+)/gi)].at(-1);
+  const match = markedPrice ?? /(\d{1,3}(?:[,.]\s?\d{3})+|\d+)\s*(円)?(?:\s*[※*)])?$/.exec(text);
+  if (!match) {
+    return null;
+  }
+
+  const prefix = text.slice(0, match.index);
+  const [token, digits, yen] = match;
+  // Require a separator for a bare price so a number attached to a name stays part of it.
+  if (!markedPrice && (/[\d,.+-]$/.test(prefix) || (prefix && !yen && !/\s$/.test(prefix)))) {
+    return null;
+  }
+
+  // Keep any quantity printed after a marked price in the product identity.
+  const suffix = text.slice(prefix.length + token.length).replace(/^\s*円/, "").trim();
+  const nameSuffix = /^(?:[※*)]|\((?:税込|税抜)\)|税込|税抜|\s)*$/.test(suffix) ? "" : suffix;
+  const name = `${prefix.trim()} ${nameSuffix}`.trim();
+  const amount = Number(digits.replace(/[\s,.]/g, ""));
+  return Number.isSafeInteger(amount) && amount > 0 ? { name, amount } : null;
+}
+
+function extractReceiptProductRows(lines: string[]) {
+  const normalizedLines = lines.map((line) => line.normalize("NFKC").trim());
+  const prices = normalizedLines.map(parseReceiptProductPrice);
+  const rows: Array<{ key: string; text: string }> = [];
+
+  for (const [index, line] of normalizedLines.entries()) {
+    const inlinePrice = prices[index];
+    const name = inlinePrice?.name ?? line;
+    if (!isReceiptProductName(name)) {
+      continue;
+    }
+
+    const nextPrice = prices[index + 1];
+    const price = inlinePrice ?? (nextPrice?.name === "" ? nextPrice : null);
+    if (price) {
+      const normalizedName = name.replace(/\s+/g, "").toLowerCase();
+      const text = lines[index].trim();
+      rows.push({
+        key: `${price.amount}:${normalizedName}`,
+        text: inlinePrice ? text : `${text}\n${lines[index + 1].trim()}`,
+      });
+    }
+  }
+
+  return rows;
+}
+
+export function mergeReceiptOcrText(baseText: string, supplementalLines: string[]) {
+  const baseLines = baseText.split(/\r?\n/).map((line) => line.trim());
+  const result = baseLines.filter(Boolean);
+  const knownProducts = new Set(extractReceiptProductRows(baseLines).map((row) => row.key));
+
+  for (const row of extractReceiptProductRows(supplementalLines)) {
+    if (!knownProducts.has(row.key)) {
+      knownProducts.add(row.key);
+      result.push(row.text);
+    }
+  }
+
+  return result.join("\n");
 }
 
 export type OCRLine = {
@@ -762,13 +760,16 @@ export function extractShopName(lines: OCRLine[]) {
 function resolveReceiptFieldCandidate<T extends string | number>(
   entries: ReceiptCandidate<T>[],
 ): FieldCandidate<T> {
+  // Repeated estimates should contribute no votes once a pass reads a total label.
+  const labeledTotals = entries.filter(({ candidate }) => candidate.evidence === "labeledTotal");
+  const votingEntries = labeledTotals.length > 0 ? labeledTotals : entries;
   const groups = new Map<string, {
     value: T;
     confidences: number[];
     headerCount: number;
   }>();
 
-  for (const entry of entries) {
+  for (const entry of votingEntries) {
     const candidate = entry.candidate;
     if (candidate.value === null) {
       continue;
@@ -1149,44 +1150,24 @@ export function extractTotalCandidate(
   lines: OCRLine[],
   fallbackConfidence: number,
 ): FieldCandidate<number> {
-  const value = extractTotalAmount(rawText);
-  if (value === null) {
-    return { value: null, confidence: 0 };
+  const normalizedLines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
+  const labeledTotal = extractLabeledTotals(normalizedLines).at(-1);
+  if (labeledTotal) {
+    const confidences = extractLabeledTotals(lines.map((line) => line.text.normalize("NFKC")))
+      .filter((total) => total.value === labeledTotal.value)
+      .map(({ labelIndex, amountIndex }) =>
+        Math.min(lines[labelIndex].confidence, lines[amountIndex].confidence),
+      );
+    return {
+      value: labeledTotal.value,
+      confidence: confidences.length > 0 ? Math.max(...confidences) : fallbackConfidence,
+      evidence: "labeledTotal",
+    };
   }
 
-  const explicitTotalConfidences = lines.flatMap((line, index) => {
-    const normalizedText = line.text.normalize("NFKC");
-    const keywordMatch = totalKeywords.exec(normalizedText);
-    if (
-      !keywordMatch ||
-      hasNonMonetaryAggregatePrefix(normalizedText, keywordMatch.index) ||
-      hasNonMonetaryAggregateSuffix(normalizedText, keywordMatch.index, keywordMatch[0].length)
-    ) {
-      return [];
-    }
-
-    const sameLineAmount = extractPrioritizedTotalAmount(normalizedText);
-    if (sameLineAmount === value) {
-      return [line.confidence];
-    }
-
-    const nextLine = lines[index + 1];
-    if (!nextLine) {
-      return [];
-    }
-
-    const nextLineText = nextLine.text.normalize("NFKC");
-    if (isNonMonetaryTotalLine(nextLineText) || !bareAmountLine.test(nextLineText.trim())) {
-      return [];
-    }
-
-    const nextLineAmount = extractPrioritizedTotalAmount(nextLineText);
-    return nextLineAmount === value
-      ? [Math.min(line.confidence, nextLine.confidence)]
-      : [];
-  });
-  if (explicitTotalConfidences.length > 0) {
-    return { value, confidence: Math.max(...explicitTotalConfidences) };
+  const value = extractInferredTotalAmount(normalizedLines);
+  if (value === null) {
+    return { value: null, confidence: 0 };
   }
 
   const amountConfidence = lines
@@ -1197,12 +1178,17 @@ export function extractTotalCandidate(
     confidence: amountConfidence > 0
       ? Math.round(amountConfidence * 0.75)
       : Math.round(fallbackConfidence * 0.65),
+    evidence: "inferredTotal",
   };
 }
 
 export function extractTotalAmount(rawText: string) {
   const lines = rawText.split(/\r?\n/).map((line) => line.normalize("NFKC"));
-  let selectedTotalAmount: number | null = null;
+  return extractLabeledTotals(lines).at(-1)?.value ?? extractInferredTotalAmount(lines);
+}
+
+function extractLabeledTotals(lines: string[]) {
+  const totals: Array<{ value: number; labelIndex: number; amountIndex: number }> = [];
 
   for (const [index, line] of lines.entries()) {
     const keywordMatch = totalKeywords.exec(line);
@@ -1217,7 +1203,7 @@ export function extractTotalAmount(rawText: string) {
     const afterKeyword = line.slice(keywordMatch.index + keywordMatch[0].length);
     const sameLineAmount = extractPrioritizedTotalAmount(afterKeyword);
     if (sameLineAmount !== null) {
-      selectedTotalAmount = sameLineAmount;
+      totals.push({ value: sameLineAmount, labelIndex: index, amountIndex: index });
       continue;
     }
 
@@ -1225,15 +1211,15 @@ export function extractTotalAmount(rawText: string) {
     if (nextLine !== undefined && !isNonMonetaryTotalLine(nextLine) && bareAmountLine.test(nextLine.trim())) {
       const nextLineAmount = extractPrioritizedTotalAmount(nextLine);
       if (nextLineAmount !== null) {
-        selectedTotalAmount = nextLineAmount;
+        totals.push({ value: nextLineAmount, labelIndex: index, amountIndex: index + 1 });
       }
     }
   }
 
-  if (selectedTotalAmount !== null) {
-    return selectedTotalAmount;
-  }
+  return totals;
+}
 
+function extractInferredTotalAmount(lines: string[]) {
   for (const line of lines) {
     if (/(?:%|％)\s*(?:対象|対|TH|T\s*H)/i.test(line)) {
       const amounts = extractCurrencyAmounts(line);
@@ -1253,6 +1239,11 @@ export function toClientOCRResult(result: ReceiptOCRResult): ClientOCRResult {
 
 function hasNonMonetaryAggregatePrefix(value: string, keywordIndex: number) {
   const prefix = value.slice(0, keywordIndex);
+  const precedingSubtotal = /小\s*計\s*(.*)$/.exec(prefix);
+  if (precedingSubtotal && bareAmountLine.test(precedingSubtotal[1].trim())) {
+    // A complete subtotal and amount can precede a separate total on the same line.
+    return false;
+  }
   return /(?:商品|値引|割引|小\s*計|前\s*合\s*計|ポイント|マイル|残\s*高|獲\s*得|加\s*算|利用|使用|還\s*元)/i.test(prefix);
 }
 
