@@ -353,10 +353,13 @@ describe("receipt OCR field extraction", () => {
 
   it.each([
     ["牛乳 ¥198", "豆乳 ¥198"],
+    ["ごま ¥198", "こま ¥198"],
     ["牛乳500ml ¥198", "牛乳1000ml ¥198"],
     ["牛乳 1個 ¥198", "牛乳 2個 ¥198"],
     ["牛乳 ¥198 1個", "牛乳 ¥198 2個"],
     ["牛乳 198", "牛乳 1,980"],
+    ["国産小麦の白あんぱん ¥198", "国産小麦の黒あんぱん ¥198"],
+    ["テリヤキチキンとたまこ 1個 ¥348", "テリヤキチキンとたまご 2個 ¥348"],
   ])("keeps separate product rows: %s and %s", (base, supplemental) => {
     expect(mergeReceiptOcrText(base, [supplemental])).toBe(`${base}\n${supplemental}`);
   });
@@ -364,6 +367,13 @@ describe("receipt OCR field extraction", () => {
   it("deduplicates the same product across inline and split price formats", () => {
     expect(mergeReceiptOcrText("牛乳５００ｍｌ\n￥１，９８０", ["牛 乳500ml 1980"]))
       .toBe("牛乳５００ｍｌ\n￥１，９８０");
+  });
+
+  it("deduplicates a long product name with one missing dakuten at the same price", () => {
+    expect(mergeReceiptOcrText(
+      "テリヤキチキンとたまこ ¥348\n合計 ¥348",
+      ["テリヤキチキンとたまご", "348"],
+    )).toBe("テリヤキチキンとたまこ ¥348\n合計 ¥348");
   });
 
   it("does not append totals, receipt metadata, or unpaired amounts as products", () => {
@@ -397,6 +407,30 @@ describe("receipt OCR recognition passes", () => {
     });
     return new File([], "receipt.png", { type: "image/png" });
   }
+
+  it.each([
+    ["FamilyMartt", 60, "FamilyMart", 100, "FamilyMart", 100],
+    ["FamilyMartt\n五条大宮店", 60, "FamilyMart", 100, "FamilyMart 五条大宮店", 100],
+    ["FamilyMart", 95, "FamilyMartt", 70, "FamilyMart", 88],
+  ])("selects the shop spelling by confidence and support for %s", async (
+    fullPageName, fullPageConfidence, headerName, headerConfidence, expectedName, expectedConfidence,
+  ) => {
+    const image = mockReceiptImage();
+    const fullPage = { data: { text: `${fullPageName}\n合計 ¥755`, confidence: fullPageConfidence } };
+    const header = { data: { text: headerName, confidence: headerConfidence } };
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect(await runReceiptOcr(image)).toMatchObject({
+      shop_name: expectedName,
+      field_confidence: { shop_name: expectedConfidence },
+    });
+  });
 
   it("supplements product rows and prefers the labeled total from the focused pass", async () => {
     const image = mockReceiptImage();

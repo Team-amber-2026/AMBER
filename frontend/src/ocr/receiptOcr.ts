@@ -12,11 +12,13 @@ type FieldCandidate<T> = {
   value: T | null;
   confidence: number;
   evidence?: "labeledTotal" | "inferredTotal";
+  shopNameConfidence?: { brand: number; branch: number };
 };
 type ReceiptCandidate<T> = {
   candidate: FieldCandidate<T>;
   fromHeader?: boolean;
 };
+type ReceiptFieldVote<T> = FieldCandidate<T> & { value: T; fromHeader: boolean };
 
 export type ReceiptImageCrop = {
   x: number;
@@ -421,7 +423,10 @@ async function runReceiptOcrExclusive(
       ...(invertedHeaderLines.length > 0
         ? [{ candidate: extractShopNameCandidate(invertedHeaderLines), fromHeader: true }]
         : []),
-    ]);
+    ], {
+      matches: areSimilarShopCandidates,
+      select: selectShopRepresentation,
+    });
     const dateCandidate = resolveReceiptFieldCandidate([
       { candidate: extractDateCandidate(originalText, originalLines, originalResult.data.confidence) },
       ...(enhancedResult
@@ -673,7 +678,7 @@ function parseReceiptProductPrice(text: string) {
 function extractReceiptProductRows(lines: string[]) {
   const normalizedLines = lines.map((line) => line.normalize("NFKC").trim());
   const prices = normalizedLines.map(parseReceiptProductPrice);
-  const rows: Array<{ key: string; text: string }> = [];
+  const rows: Array<{ name: string; amount: number; text: string }> = [];
 
   for (const [index, line] of normalizedLines.entries()) {
     const inlinePrice = prices[index];
@@ -688,7 +693,8 @@ function extractReceiptProductRows(lines: string[]) {
       const normalizedName = name.replace(/\s+/g, "").toLowerCase();
       const text = lines[index].trim();
       rows.push({
-        key: `${price.amount}:${normalizedName}`,
+        name: normalizedName,
+        amount: price.amount,
         text: inlinePrice ? text : `${text}\n${lines[index + 1].trim()}`,
       });
     }
@@ -700,16 +706,47 @@ function extractReceiptProductRows(lines: string[]) {
 export function mergeReceiptOcrText(baseText: string, supplementalLines: string[]) {
   const baseLines = baseText.split(/\r?\n/).map((line) => line.trim());
   const result = baseLines.filter(Boolean);
-  const knownProducts = new Set(extractReceiptProductRows(baseLines).map((row) => row.key));
+  const namesByAmount = new Map<number, Set<string>>();
+  for (const { name, amount } of extractReceiptProductRows(baseLines)) {
+    const names = namesByAmount.get(amount) ?? new Set<string>();
+    names.add(name);
+    namesByAmount.set(amount, names);
+  }
 
-  for (const row of extractReceiptProductRows(supplementalLines)) {
-    if (!knownProducts.has(row.key)) {
-      knownProducts.add(row.key);
-      result.push(row.text);
+  for (const { name, amount, text } of extractReceiptProductRows(supplementalLines)) {
+    const knownNames = namesByAmount.get(amount) ?? new Set<string>();
+    if (knownNames.has(name) || [...knownNames].some((knownName) => differsByKanaVoicing(knownName, name))) {
+      continue;
     }
+    knownNames.add(name);
+    namesByAmount.set(amount, knownNames);
+    result.push(text);
   }
 
   return result.join("\n");
+}
+
+function differsByKanaVoicing(left: string, right: string) {
+  // Keep short names distinct. In a longer name, accept only one changed voicing mark.
+  if (left.length !== right.length || (left.match(/\p{L}/gu)?.length ?? 0) < 8) {
+    return false;
+  }
+
+  let foundDifference = false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] === right[index]) {
+      continue;
+    }
+    if (foundDifference || stripKanaVoicing(left[index]) !== stripKanaVoicing(right[index])) {
+      return false;
+    }
+    foundDifference = true;
+  }
+  return foundDifference;
+}
+
+function stripKanaVoicing(character: string) {
+  return character.normalize("NFD").replace(/[\u3099\u309A]/g, "");
 }
 
 export type OCRLine = {
@@ -759,80 +796,67 @@ export function extractShopName(lines: OCRLine[]) {
 
 function resolveReceiptFieldCandidate<T extends string | number>(
   entries: ReceiptCandidate<T>[],
+  spelling?: {
+    matches: (left: T, right: T) => boolean;
+    select: (votes: ReceiptFieldVote<T>[]) => FieldCandidate<T>;
+  },
 ): FieldCandidate<T> {
   // Repeated estimates should contribute no votes once a pass reads a total label.
   const labeledTotals = entries.filter(({ candidate }) => candidate.evidence === "labeledTotal");
   const votingEntries = labeledTotals.length > 0 ? labeledTotals : entries;
-  const groups = new Map<string, {
-    value: T;
-    confidences: number[];
-    headerCount: number;
-  }>();
+  const groups = new Map<string, ReceiptFieldVote<T>[]>();
 
-  for (const entry of votingEntries) {
-    const candidate = entry.candidate;
-    if (candidate.value === null) {
+  for (const { candidate, fromHeader = false } of votingEntries) {
+    const { value } = candidate;
+    if (value === null) {
       continue;
     }
-    const key = typeof candidate.value === "string"
-      ? candidate.value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
-      : String(candidate.value);
-    const similarEntry = typeof candidate.value === "string"
-      ? [...groups.entries()].find(([, group]) =>
-        typeof group.value === "string" &&
-        areSimilarShopCandidates(group.value, candidate.value as string),
-      )
-      : undefined;
-    const similarGroup = similarEntry?.[1];
-    const group = similarGroup ?? groups.get(key) ?? {
-      value: candidate.value,
-      confidences: [],
-      headerCount: 0,
-    };
-    if (
-      typeof group.value === "string" &&
-      typeof candidate.value === "string"
-    ) {
-      group.value = preferShopRepresentation(group.value, candidate.value) as T;
+
+    const key = normalizeReceiptFieldValue(value);
+    const group = groups.get(key) ?? (spelling &&
+      [...groups.values()].find((votes) => votes.every((vote) =>
+        normalizeReceiptFieldValue(vote.value) === key || spelling.matches(vote.value, value),
+      )));
+    const vote = { ...candidate, value, fromHeader };
+    if (group) {
+      group.push(vote);
+    } else {
+      groups.set(key, [vote]);
     }
-    group.confidences.push(candidate.confidence ?? 0);
-    if (entry.fromHeader) {
-      group.headerCount += 1;
-    }
-    groups.set(similarEntry?.[0] ?? key, group);
   }
 
-  const ranked = [...groups.values()].map((group) => {
-    const averageConfidence = group.confidences.reduce(
-      (sum, confidence) => sum + confidence,
-      0,
-    ) / group.confidences.length;
-    const supportCount = group.confidences.length;
-    // Agreement is deliberately weighted more than a single confidence score.
-    // This reduces the chance that one noisy pass wins over two consistent ones.
-    const score =
-      averageConfidence * 0.45 +
-      supportCount * 32 +
-      group.headerCount * 18;
-    const calibratedConfidence = Math.min(
+  const selected = [...groups.values()].map((votes) => ({
+    votes,
+    ...scoreReceiptFieldVotes(votes),
+  })).sort((left, right) => right.score - left.score)[0];
+  if (!selected) {
+    return { value: null, confidence: 0 };
+  }
+  return spelling?.select(selected.votes) ?? { value: selected.votes[0].value, confidence: selected.confidence };
+}
+
+function normalizeReceiptFieldValue(value: string | number) {
+  return typeof value === "string"
+    ? value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
+    : String(value);
+}
+
+function scoreReceiptFieldVotes(votes: Array<{ confidence: number; fromHeader: boolean }>) {
+  const supportCount = votes.length;
+  const averageConfidence = votes.reduce((sum, vote) => sum + vote.confidence, 0) / supportCount;
+  const headerCount = votes.filter((vote) => vote.fromHeader).length;
+  // Agreement reinforces OCR confidence and header passes carry layout evidence.
+  return {
+    score: averageConfidence * 0.45 + supportCount * 32 + headerCount * 18,
+    confidence: Math.min(
       100,
       Math.round(
         averageConfidence * 0.45 +
         Math.min(45, supportCount * 18) +
-        Math.min(25, group.headerCount * 12),
+        Math.min(25, headerCount * 12),
       ),
-    );
-    return {
-      value: group.value,
-      confidence: calibratedConfidence,
-      score,
-    };
-  }).sort((left, right) => right.score - left.score);
-
-  const selected = ranked[0];
-  return selected
-    ? { value: selected.value, confidence: selected.confidence }
-    : { value: null, confidence: 0 };
+    ),
+  };
 }
 
 function hasCandidateDisagreement<T extends string | number>(entries: ReceiptCandidate<T>[]) {
@@ -840,9 +864,7 @@ function hasCandidateDisagreement<T extends string | number>(entries: ReceiptCan
     entries
       .map(({ candidate }) => candidate.value)
       .filter((value): value is T => value !== null)
-      .map((value) => typeof value === "string"
-        ? value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
-        : String(value)),
+      .map(normalizeReceiptFieldValue),
   );
   return values.size > 1;
 }
@@ -929,6 +951,10 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
         100,
         Math.round((brandCandidate.confidence + branchCandidate.confidence) / 2 + 8),
       ),
+      shopNameConfidence: {
+        brand: brandCandidate.confidence,
+        branch: branchCandidate.confidence,
+      },
     };
   }
 
@@ -978,7 +1004,10 @@ function areSimilarShopCandidates(left: string, right: string) {
     return false;
   }
 
-  return levenshteinDistance(leftBrand, rightBrand) <= 1;
+  return levenshteinDistance(
+    normalizeReceiptFieldValue(leftBrand),
+    normalizeReceiptFieldValue(rightBrand),
+  ) <= 1;
 }
 
 function getLatinBrandPart(value: string) {
@@ -994,16 +1023,34 @@ function getBranchPart(value: string) {
   return match?.[0] ?? "";
 }
 
-function preferShopRepresentation(current: string, next: string) {
-  const currentBranch = getBranchPart(current);
-  const nextBranch = getBranchPart(next);
-  if (nextBranch && !currentBranch) {
-    return next;
+function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandidate<string> {
+  const spellings = new Map<string, ReceiptFieldVote<string>[]>();
+  for (const vote of votes) {
+    const key = normalizeReceiptFieldValue(getLatinBrandPart(vote.value) || vote.value);
+    const spellingVotes = spellings.get(key) ?? [];
+    spellingVotes.push({ ...vote, confidence: vote.shopNameConfidence?.brand ?? vote.confidence });
+    spellings.set(key, spellingVotes);
   }
-  if (currentBranch && !nextBranch) {
-    return current;
-  }
-  return next.length > current.length ? next : current;
+
+  const selected = [...spellings.values()].map((spellingVotes) => ({
+    votes: spellingVotes,
+    ...scoreReceiptFieldVotes(spellingVotes),
+  })).sort((left, right) => right.score - left.score)[0];
+  const bestSpelling = selected.votes.sort((left, right) =>
+    right.confidence - left.confidence || Number(right.fromHeader) - Number(left.fromHeader),
+  )[0];
+
+  // A readable branch can come from a pass that used a different brand spelling.
+  const branch = votes.filter((vote) => getBranchPart(vote.value))
+    .sort((left, right) =>
+      (right.shopNameConfidence?.branch ?? right.confidence) -
+      (left.shopNameConfidence?.branch ?? left.confidence),
+    )[0];
+  const brand = getLatinBrandPart(bestSpelling.value);
+  const value = brand && branch
+    ? `${brand}${branch.value.slice(getLatinBrandPart(branch.value).length)}`.slice(0, 255)
+    : bestSpelling.value;
+  return { value, confidence: selected.confidence };
 }
 
 function levenshteinDistance(left: string, right: string) {
