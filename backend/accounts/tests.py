@@ -341,14 +341,18 @@ class ProxiedAuthApiTests(APITestCase):
         # Django rotates the CSRF secret at login. The old token must fail.
         stale_logout = reloaded_client.post(reverse("auth-logout"), HTTP_X_CSRFTOKEN=token)
         self.assertEqual(stale_logout.status_code, 403)
+        self.assertNotIn("code", stale_logout.json())
         logout_response = reloaded_client.post(
             reverse("auth-logout"),
             HTTP_X_CSRFTOKEN=reloaded_client.cookies["csrftoken"].value,
         )
         self.assertEqual(logout_response.status_code, 204)
         self.assertEqual(logout_response.cookies["sessionid"]["max-age"], 0)
-        self.assertEqual(reloaded_client.get(reverse("auth-user")).status_code, 403)
-        self.assertEqual(reloaded_client.get("/api/expenses/").status_code, 403)
+        for name in ("auth-user", "expense-list", "monthly-summary", "category-list"):
+            with self.subTest(name=name):
+                response = reloaded_client.get(reverse(name))
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json()["code"], "not_authenticated")
 
     def test_proxy_does_not_bypass_csrf_cookie_or_header_checks(self):
         response = self.client.post(reverse("auth-register"), self.credentials, format="json")

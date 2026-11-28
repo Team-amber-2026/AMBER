@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 
 import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./api/auth";
+import apiClient from "./api/client";
 import AuthPage from "./pages/AuthPage";
 import TopPage from "./pages/TopPage";
 import MyPage from "./pages/MyPage";
@@ -14,7 +15,7 @@ import ExpenseDetailPage from "./pages/ExpenseDetailPage";
 import ExpenseEditPage from "./pages/ExpenseEditPage";
 import MonthlySummaryPage from "./pages/MonthlySummaryPage";
 import type { AuthMode, LoginForm, RegisterForm, User } from "./types";
-import { readableError, readableErrorStatus } from "./utils/errors";
+import { isUnauthenticated, readableError } from "./utils/errors";
 import styles from "./App.module.css";
 
 const initialLogin: LoginForm = {
@@ -39,22 +40,45 @@ export default function App() {
   const navigate = useNavigate();
   const logoutInFlight = useRef(false);
 
+  // Install before protected pages start fetching in their mount effects.
+  useLayoutEffect(() => {
+    if (!user) return;
+
+    let active = true;
+    const interceptor = apiClient.interceptors.response.use(undefined, (error: unknown) => {
+      if (active && isUnauthenticated(error)) {
+        active = false;
+        setUser(null);
+        setError("");
+        setMessage("セッションが切れました。再度ログインしてください");
+      }
+      return Promise.reject(error);
+    });
+
+    return () => {
+      // Axios retains the interceptor chain on already-dispatched requests.
+      active = false;
+      apiClient.interceptors.response.eject(interceptor);
+    };
+  }, [user]);
+
   useEffect(() => {
+    let active = true;
     async function initializeAuth() {
       try {
         const currentUser = await fetchCurrentUser();
-        setUser(currentUser);
+        if (active) setUser(currentUser);
       } catch (requestError) {
-        const status = readableErrorStatus(requestError);
-        if (status !== 403 && status !== 401) {
+        if (active && !isUnauthenticated(requestError)) {
           setError(readableError(requestError));
         }
       } finally {
-        setAuthChecked(true);
+        if (active) setAuthChecked(true);
       }
     }
 
-    initializeAuth();
+    void initializeAuth();
+    return () => { active = false; };
   }, []);
 
   async function handleRegister() {
@@ -109,7 +133,7 @@ export default function App() {
       setMessage("ログアウトしました。");
       navigate("/login", { replace: true });
     } catch (requestError) {
-      setError(readableError(requestError));
+      if (!isUnauthenticated(requestError)) setError(readableError(requestError));
     } finally {
       logoutInFlight.current = false;
       setIsSubmitting(false);
