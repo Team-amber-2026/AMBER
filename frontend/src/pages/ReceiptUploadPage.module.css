@@ -183,7 +183,8 @@
   max-height: 520px;
   margin-inline: auto;
   cursor: crosshair;
-  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -198,6 +199,8 @@
 }
 
 .cropSelection {
+  min-width: 8px;
+  min-height: 8px;
   position: absolute;
   z-index: 1;
   border: 2px solid #ffdc78;
@@ -222,6 +225,15 @@
   margin: 8px 0 0;
   color: #697066;
   font-size: 14px;
+}
+
+.touchHint {
+  display: none;
+}
+
+@media (any-pointer: coarse) {
+  .touchHint { display: inline; }
+  .mouseHint { display: none; }
 }
 
 .emptyPreview {

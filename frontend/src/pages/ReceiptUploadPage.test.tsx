@@ -237,6 +237,51 @@ describe("classification error recovery", () => {
 });
 
 describe("OCR crop changes", () => {
+  it("keeps a swipe native and only commits a completed long-press drag", async () => {
+    await renderPage();
+    await selectFile();
+    const frame = container.querySelector("img")!.parentElement!;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 100));
+    function touch(type: string, x: number, y: number) {
+      const point = { identifier: 1, clientX: x, clientY: y };
+      const ended = type === "touchend" || type === "touchcancel";
+      const event = new TouchEvent(type, {
+        bubbles: true, cancelable: true, touches: ended ? [] : [point as Touch],
+        changedTouches: [point as Touch],
+      });
+      act(() => { frame.dispatchEvent(event); });
+      return event;
+    }
+
+    vi.useFakeTimers();
+    try {
+      touch("touchstart", 10, 10);
+      expect(touch("touchmove", 10, 30).defaultPrevented).toBe(false);
+      act(() => vi.advanceTimersByTime(600));
+      expect(touch("touchmove", 10, 60).defaultPrevented).toBe(false);
+      touch("touchend", 10, 60);
+
+      touch("touchstart", 20, 20);
+      act(() => vi.advanceTimersByTime(500));
+      expect(touch("touchmove", 70, 70).defaultPrevented).toBe(true);
+      touch("touchend", 70, 70);
+
+      touch("touchstart", 5, 5);
+      act(() => vi.advanceTimersByTime(500));
+      touch("touchmove", 90, 90);
+      touch("touchcancel", 90, 90);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await clickButton("OCR解析へ進む");
+    const selected = vi.mocked(runReceiptOcr).mock.calls[0][3];
+    expect(selected?.x).toBe(0.2);
+    expect(selected?.y).toBe(0.2);
+    expect(selected?.width).toBeCloseTo(0.5);
+    expect(selected?.height).toBeCloseTo(0.5);
+  });
+
   it("invalidates analyzed data when the crop changes or is reset", async () => {
     await renderPage();
     await selectFile();
