@@ -364,6 +364,13 @@ describe("receipt OCR field extraction", () => {
     expect(mergeReceiptOcrText(base, [supplemental])).toBe(`${base}\n${supplemental}`);
   });
 
+  it("preserves repeated product rows when supplemental OCR has more occurrences", () => {
+    expect(mergeReceiptOcrText(
+      "テリヤキチキンとたまこ ¥348",
+      ["テリヤキチキンとたまご ¥348", "テリヤキチキンとたまご ¥348"],
+    )).toBe("テリヤキチキンとたまこ ¥348\nテリヤキチキンとたまご ¥348");
+  });
+
   it("deduplicates the same product across inline and split price formats", () => {
     expect(mergeReceiptOcrText("牛乳５００ｍｌ\n￥１，９８０", ["牛 乳500ml 1980"]))
       .toBe("牛乳５００ｍｌ\n￥１，９８０");
@@ -410,7 +417,8 @@ describe("receipt OCR recognition passes", () => {
 
   it.each([
     ["FamilyMartt", 60, "FamilyMart", 100, "FamilyMart", 100],
-    ["FamilyMartt\n五条大宮店", 60, "FamilyMart", 100, "FamilyMart 五条大宮店", 100],
+    ["FamilyMartt\n五条大宮店", 60, "FamilyMart", 100, "FamilyMart 五条大宮店", 80],
+    ["FamilyMart 5条店", 60, "FamilyMart", 100, "FamilyMart 5条店", 80],
     ["FamilyMart", 95, "FamilyMartt", 70, "FamilyMart", 88],
   ])("selects the shop spelling by confidence and support for %s", async (
     fullPageName, fullPageConfidence, headerName, headerConfidence, expectedName, expectedConfidence,
@@ -429,6 +437,37 @@ describe("receipt OCR recognition passes", () => {
     expect(await runReceiptOcr(image)).toMatchObject({
       shop_name: expectedName,
       field_confidence: { shop_name: expectedConfidence },
+    });
+  });
+
+  it("includes branch confidence when combining a brand with a low-confidence branch", async () => {
+    const image = mockReceiptImage();
+    const fullPage = { data: { text: "合計 ¥755", confidence: 100 } };
+    const header = {
+      data: {
+        text: "FamilyMart\n五条大宮店",
+        confidence: 100,
+        blocks: [{
+          paragraphs: [{
+            lines: [
+              { text: "FamilyMart", confidence: 100, bbox: { y0: 0, y1: 20 } },
+              { text: "五条大宮店", confidence: 30, bbox: { y0: 30, y1: 50 } },
+            ],
+          }],
+        }],
+      },
+    };
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect(await runReceiptOcr(image)).toMatchObject({
+      shop_name: "FamilyMart 五条大宮店",
+      field_confidence: { shop_name: 65 },
     });
   });
 

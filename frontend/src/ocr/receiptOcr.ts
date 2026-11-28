@@ -706,21 +706,24 @@ function extractReceiptProductRows(lines: string[]) {
 export function mergeReceiptOcrText(baseText: string, supplementalLines: string[]) {
   const baseLines = baseText.split(/\r?\n/).map((line) => line.trim());
   const result = baseLines.filter(Boolean);
-  const namesByAmount = new Map<number, Set<string>>();
-  for (const { name, amount } of extractReceiptProductRows(baseLines)) {
-    const names = namesByAmount.get(amount) ?? new Set<string>();
-    names.add(name);
-    namesByAmount.set(amount, names);
-  }
+  const baseRows = extractReceiptProductRows(baseLines);
+  const matchedBaseRows = new Set<number>();
 
-  for (const { name, amount, text } of extractReceiptProductRows(supplementalLines)) {
-    const knownNames = namesByAmount.get(amount) ?? new Set<string>();
-    if (knownNames.has(name) || [...knownNames].some((knownName) => differsByKanaVoicing(knownName, name))) {
+  for (const supplementalRow of extractReceiptProductRows(supplementalLines)) {
+    const baseRowIndex = baseRows.findIndex((baseRow, index) =>
+      !matchedBaseRows.has(index) &&
+      baseRow.amount === supplementalRow.amount &&
+      (
+        baseRow.name === supplementalRow.name ||
+        differsByKanaVoicing(baseRow.name, supplementalRow.name)
+      ),
+    );
+    if (baseRowIndex >= 0) {
+      matchedBaseRows.add(baseRowIndex);
       continue;
     }
-    knownNames.add(name);
-    namesByAmount.set(amount, knownNames);
-    result.push(text);
+
+    result.push(supplementalRow.text);
   }
 
   return result.join("\n");
@@ -1012,7 +1015,9 @@ function areSimilarShopCandidates(left: string, right: string) {
 
 function getLatinBrandPart(value: string) {
   const normalized = value.normalize("NFKC").replace(/\s+/g, " ").trim();
-  const match = normalized.match(/^[A-Za-z][A-Za-z0-9&.'’ -]*/);
+  // Stop at standalone numeric tokens so a branch such as "5条店" is not
+  // mistaken for part of the Latin brand.
+  const match = normalized.match(/^[A-Za-z0-9][A-Za-z0-9&.'’]*(?:-[A-Za-z0-9&.'’]+)*(?: +[A-Za-z][A-Za-z0-9&.'’]*(?:-[A-Za-z0-9&.'’]+)*)*/);
   const brand = match?.[0]?.trim() ?? "";
   return /[A-Za-z]/.test(brand) && brand.length >= 5 ? brand : "";
 }
@@ -1050,7 +1055,11 @@ function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandi
   const value = brand && branch
     ? `${brand}${branch.value.slice(getLatinBrandPart(branch.value).length)}`.slice(0, 255)
     : bestSpelling.value;
-  return { value, confidence: selected.confidence };
+  const branchConfidence = branch?.shopNameConfidence?.branch ?? branch?.confidence;
+  const confidence = branch && branchConfidence !== undefined
+    ? Math.round((selected.confidence + branchConfidence) / 2)
+    : selected.confidence;
+  return { value, confidence };
 }
 
 function levenshteinDistance(left: string, right: string) {
