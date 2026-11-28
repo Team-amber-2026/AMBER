@@ -703,13 +703,14 @@ function parseReceiptProductPrice(text: string) {
   const nameSuffix = /^(?:[※*)]|\((?:税込|税抜)\)|税込|税抜|\s)*$/.test(suffix) ? "" : suffix;
   const name = `${prefix.trim()} ${nameSuffix}`.trim();
   const amount = Number(digits.replace(/[\s,.]/g, ""));
-  return Number.isSafeInteger(amount) && amount > 0 ? { name, amount } : null;
+  const hasCurrency = Boolean(markedPrice || yen);
+  return Number.isSafeInteger(amount) && amount > 0 ? { name, amount, hasCurrency } : null;
 }
 
 function extractReceiptProductRows(lines: string[]) {
   const normalizedLines = lines.map((line) => line.normalize("NFKC").trim());
   const prices = normalizedLines.map(parseReceiptProductPrice);
-  const rows: Array<{ name: string; amount: number; text: string }> = [];
+  const rows: Array<{ name: string; amount: number; text: string; hasPriceEvidence: boolean }> = [];
 
   for (const [index, line] of normalizedLines.entries()) {
     const inlinePrice = prices[index];
@@ -727,6 +728,7 @@ function extractReceiptProductRows(lines: string[]) {
         name: normalizedName,
         amount: price.amount,
         text: inlinePrice ? text : `${text}\n${lines[index + 1].trim()}`,
+        hasPriceEvidence: price.hasCurrency || !inlinePrice,
       });
     }
   }
@@ -990,15 +992,11 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
     }
   }
   const baselineHeight = median([...uniqueLineHeights.values()]);
+  // A bare trailing number can be part of a brand in any writing system.
   const pricedProductLines = new Set(
     extractReceiptProductRows(lines.map(({ text }) => text))
-      .flatMap(({ text }) => {
-        const [firstLine, priceLine] = text.split("\n", 2);
-        // A Latin brand can end in a bare number. Require clearer price evidence for those lines.
-        const hasPriceEvidence = priceLine !== undefined ||
-          /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]|[¥￥\\]|\d\s*円/.test(firstLine);
-        return hasPriceEvidence ? [firstLine] : [];
-      }),
+      .filter((row) => row.hasPriceEvidence)
+      .map((row) => row.text.split("\n", 1)[0]),
   );
 
   const candidates = lines.flatMap((line, index) => {
@@ -1065,16 +1063,21 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
       candidate === branchCandidate || canPairShopLines(candidate, branchCandidate),
     )
     : candidates;
-  const brandCandidates = branchCandidate && !hasInlineShopBrand(branchCandidate.text)
+  const brandCandidates = branchCandidate
     ? nameCandidates.filter((candidate) =>
       candidate !== branchCandidate &&
-      !normalizeReceiptFieldValue(branchCandidate.text).startsWith(normalizeReceiptFieldValue(candidate.text)),
+      (isLatinBrandLine(candidate.text) || isJapaneseBrandLine(candidate.text)),
     )
     : [];
-  const latinBrandCandidate = brandCandidates
+  const branchHasBrand = branchCandidate && (
+    hasInlineShopBrand(branchCandidate.text) ||
+    brandCandidates.some((candidate) => shopNameIncludesBrand(branchCandidate.text, candidate.text))
+  );
+  const separateBrandCandidates = branchHasBrand ? [] : brandCandidates;
+  const latinBrandCandidate = separateBrandCandidates
     .filter((candidate) => isLatinBrandLine(candidate.text))
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
-  const brandCandidate = latinBrandCandidate ?? brandCandidates
+  const brandCandidate = latinBrandCandidate ?? separateBrandCandidates
     .filter((candidate) => isJapaneseBrandLine(candidate.text))
     .sort((candidateA, candidateB) =>
       candidateB.score - candidateA.score || candidateB.top - candidateA.top,
@@ -1108,7 +1111,7 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   const selectedIsBranchOnly = selected === branchCandidate &&
     /店$/.test(selected.text.replace(/\s+/g, "")) &&
     !/商店$/.test(selected.text.replace(/\s+/g, "")) &&
-    !hasInlineShopBrand(selected.text);
+    !branchHasBrand;
   return {
     value: selected.text.slice(0, 255),
     confidence: selectedIsBranchOnly
@@ -1123,9 +1126,24 @@ function isReadableBranchLine(value: string) {
 }
 
 function hasInlineShopBrand(value: string) {
-  const separator = value.indexOf(" ");
-  const branch = separator >= 2 ? value.slice(separator + 1) : "";
-  return Boolean(getLatinBrandPart(value)) || (branch.length >= 2 && isReadableBranchLine(branch));
+  if (getLatinBrandPart(value)) {
+    return true;
+  }
+  // A space within a place name is common in OCR. Look for a script change at the boundary.
+  const match = /^([ァ-ヶー・]{2,}|[ぁ-ゖ]{2,})(?: +\d+)? +(.+)$/.exec(value);
+  if (!match || !isReadableBranchLine(match[2])) {
+    return false;
+  }
+  const [, brand, branch] = match;
+  const sameScript = /^[ぁ-ゖ]/.test(brand) ? /^[ぁ-ゖ]/ : /^[ァ-ヶー・]/;
+  return !sameScript.test(branch);
+}
+
+function shopNameIncludesBrand(shopName: string, brand: string) {
+  const normalizedName = normalizeReceiptFieldValue(shopName);
+  const normalizedBrand = normalizeReceiptFieldValue(brand);
+  return normalizedName.startsWith(normalizedBrand) &&
+    isReadableBranchLine(normalizedName.slice(normalizedBrand.length));
 }
 
 function isJapaneseBrandLine(value: string) {

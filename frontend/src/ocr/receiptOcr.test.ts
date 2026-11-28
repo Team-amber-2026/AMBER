@@ -597,11 +597,30 @@ describe("receipt OCR recognition passes", () => {
   });
 
   it.each([
+    ["FamilyMart\n五条 大宮店", "FamilyMart 五条 大宮店"],
+    ["マツモト\n西大路 大宮店", "マツモト 西大路 大宮店"],
+    ["スーパー 24\n西小路店", "スーパー 24 西小路店"],
+    ["スーパー 24", "スーパー 24"],
+  ])("preserves the store name from full-page OCR of %j", async (storeLines, shopName) => {
+    const image = mockReceiptImage();
+    const fullPage = mockOcrResultWithLines(`${storeLines}\n合計 ¥755`, 90);
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect((await runReceiptOcr(image)).shop_name).toBe(shopName);
+  });
+
+  it.each([
     [["いらっしゃいませ"], "マツモト 西小路店"],
     [["牛乳 ¥198"], "西小路店"],
+    [["牛乳 198円"], "西小路店"],
     [["牛乳", "198"], "西小路店"],
     [["CORN FLAKES", "¥198"], "西小路店"],
     [["牛乳"], "マツモト 西小路店"],
+    [["牛乳", "松本"], "松本 西小路店"],
   ])("does not prepend non-brand text %j to a shop name", async (precedingLines, shopName) => {
     const image = mockReceiptImage();
     const text = [...precedingLines, shopName, "合計 ¥755"].join("\n");
