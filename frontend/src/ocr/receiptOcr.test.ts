@@ -573,6 +573,53 @@ describe("receipt OCR recognition passes", () => {
     expect(result.shop_name).not.toBe("Lawson 五条大宮店");
   });
 
+  it.each([false, true])("keeps a brand and branch without bounding boxes (blocks: %s)", async (withBlocks) => {
+    const image = mockReceiptImage();
+    const text = "FamilyMart\n五条大宮店\n合計 ¥755";
+    const confidence = 90;
+    const lines = text.split("\n").map((line) => ({ text: line, confidence }));
+    const blocks = withBlocks ? [{ paragraphs: [{ lines }] }] : undefined;
+    recognize.mockResolvedValue({ data: { text, confidence, blocks } });
+
+    expect((await runReceiptOcr(image)).shop_name).toBe("FamilyMart 五条大宮店");
+  });
+
+  it("keeps the branch on a two-line OCR result when header passes are empty", async () => {
+    const image = mockReceiptImage();
+    const fullPage = { data: { text: "FamilyMart\n五条大宮店", confidence: 90 } };
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect((await runReceiptOcr(image)).shop_name).toBe("FamilyMart 五条大宮店");
+  });
+
+  it.each([
+    [["いらっしゃいませ"], "マツモト 西小路店"],
+    [["牛乳 ¥198"], "西小路店"],
+    [["牛乳", "198"], "西小路店"],
+    [["CORN FLAKES", "¥198"], "西小路店"],
+    [["牛乳"], "マツモト 西小路店"],
+  ])("does not prepend non-brand text %j to a shop name", async (precedingLines, shopName) => {
+    const image = mockReceiptImage();
+    const text = [...precedingLines, shopName, "合計 ¥755"].join("\n");
+    const fullPage = mockOcrResultWithLines(text, 95);
+    fullPage.data.blocks[0].paragraphs[0].lines.forEach((line, index) => {
+      line.confidence = index < precedingLines.length ? 60 : 95;
+      line.bbox.y0 = 4 + index * 20;
+      line.bbox.y1 = 20 + index * 20;
+    });
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect((await runReceiptOcr(image)).shop_name).toBe(shopName);
+  });
+
   it("keeps contact text in the OCR body without selecting it as the shop", async () => {
     const image = mockReceiptImage();
     const text = [
@@ -641,18 +688,21 @@ describe("receipt OCR recognition passes", () => {
     expect((await runReceiptOcr(image)).raw_ocr_text).toBe(text);
   });
 
-  it("includes branch confidence when combining a brand with a low-confidence branch", async () => {
+  it.each([
+    ["FamilyMart", "五条大宮店"],
+    ["マツモト", "西小路店"],
+  ])("includes branch confidence when combining %s with its branch", async (brand, branch) => {
     const image = mockReceiptImage();
     const fullPage = { data: { text: "合計 ¥755", confidence: 100 } };
     const header = {
       data: {
-        text: "FamilyMart\n五条大宮店",
+        text: `${brand}\n${branch}`,
         confidence: 100,
         blocks: [{
           paragraphs: [{
             lines: [
-              { text: "FamilyMart", confidence: 100, bbox: { x0: 60, x1: 140, y0: 0, y1: 20 } },
-              { text: "五条大宮店", confidence: 30, bbox: { x0: 60, x1: 140, y0: 30, y1: 50 } },
+              { text: brand, confidence: 100, bbox: { x0: 60, x1: 140, y0: 0, y1: 20 } },
+              { text: branch, confidence: 30, bbox: { x0: 60, x1: 140, y0: 30, y1: 50 } },
             ],
           }],
         }],
@@ -667,7 +717,7 @@ describe("receipt OCR recognition passes", () => {
       .mockResolvedValue({ data: { text: "", confidence: 0 } });
 
     expect(await runReceiptOcr(image)).toMatchObject({
-      shop_name: "FamilyMart 五条大宮店",
+      shop_name: `${brand} ${branch}`,
       field_confidence: { shop_name: 65 },
     });
   });

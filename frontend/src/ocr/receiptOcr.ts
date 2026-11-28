@@ -34,6 +34,7 @@ const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9
 const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?|ポイント|マイル|残\s*高|獲\s*得|利用|使用|還\s*元|加\s*算)/;
 const bareAmountLine = /^(?:[¥￥Y\\]\s*)?\d{1,3}(?:[,.]\s?\d{3})*(?:[,.]?\d+)?\s*(?:円)?(?:[※\-ー—~～])?$/;
 const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|商品名|品名|品目|明細|小計|税額|お預り|おつり|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ|お電話|お問い合わせ|営業日|営業時間|午前|午後|させて頂いて|させていただいて|頂いております|いただいております)/;
+const shopGreetingLine = /^(?:いらっしゃいませ|ようこそ|またのお越し)/;
 const latinBrandPrefix = /^[A-Za-z0-9][A-Za-z0-9&.'’ -]*/;
 // Keep enough pixels for small receipt characters. The previous 2200px limit
 // could reduce a typical 3024x4032 phone photo to roughly 1650x2200.
@@ -810,6 +811,7 @@ export type OCRLine = {
   text: string;
   confidence: number;
   top?: number;
+  estimatedTop?: boolean;
   height?: number;
   left?: number;
   right?: number;
@@ -823,22 +825,27 @@ function extractLines(
   regionHeight = pageHeight,
   pageWidth = pageHeight,
 ): OCRLine[] {
-  const detectedLines =
-    data.blocks?.flatMap((block) =>
-      block.paragraphs.flatMap((paragraph) =>
-        paragraph.lines.map((line) => ({
-          text: line.text.trim(),
-          confidence: line.confidence,
-          top: (yOffset + line.bbox.y0) / pageHeight,
-          height: line.bbox.y1 - line.bbox.y0,
-          left: line.bbox.x0 / pageWidth,
-          right: line.bbox.x1 / pageWidth,
-        })),
-      ),
-    ) ?? [];
+  const detectedLines = (data.blocks ?? [])
+    .flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines))
+    .filter((line) => line.text.trim());
+  const estimateTop = (index: number, lineCount: number) =>
+    (yOffset + (index / lineCount) * regionHeight) / pageHeight;
 
   if (detectedLines.length > 0) {
-    return detectedLines.filter((line) => line.text.length > 0);
+    return detectedLines.map(({ text, confidence, bbox }, index) => {
+      const hasVerticalPosition = bbox && Number.isFinite(bbox.y0);
+      return {
+        text: text.trim(),
+        confidence,
+        top: hasVerticalPosition
+          ? (yOffset + bbox.y0) / pageHeight
+          : estimateTop(index, detectedLines.length),
+        estimatedTop: !hasVerticalPosition,
+        height: hasVerticalPosition && Number.isFinite(bbox.y1) ? bbox.y1 - bbox.y0 : undefined,
+        left: bbox && Number.isFinite(bbox.x0) ? bbox.x0 / pageWidth : undefined,
+        right: bbox && Number.isFinite(bbox.x1) ? bbox.x1 / pageWidth : undefined,
+      };
+    });
   }
 
   const rawLines = rawText
@@ -848,14 +855,12 @@ function extractLines(
   return rawLines.map((line, index) => ({
     text: line,
     confidence: data.confidence,
-    top: (yOffset + (index / Math.max(rawLines.length, 1)) * regionHeight) / pageHeight,
+    top: estimateTop(index, rawLines.length),
+    estimatedTop: true,
   }));
 }
 
 function areShopLinesHorizontallyAligned(left: OCRLine, right: OCRLine) {
-  if (left === right) {
-    return true;
-  }
   const leftStart = left.left;
   const leftEnd = left.right;
   const rightStart = right.left;
@@ -870,11 +875,26 @@ function areShopLinesHorizontallyAligned(left: OCRLine, right: OCRLine) {
     !Number.isFinite(rightStart) ||
     !Number.isFinite(rightEnd)
   ) {
-    return false;
+    return undefined;
   }
   const leftCenter = (leftStart + leftEnd) / 2;
   const rightCenter = (rightStart + rightEnd) / 2;
   return Math.abs(leftCenter - rightCenter) <= 0.25;
+}
+
+type ShopLine = OCRLine & { index: number; top: number };
+
+function canPairShopLines(brand: ShopLine, branch: ShopLine) {
+  const aligned = areShopLinesHorizontallyAligned(brand, branch);
+  if (aligned === false) {
+    return false;
+  }
+  const adjacent = brand.index + 1 === branch.index;
+  // Estimated positions give only line order. Use the preceding line when either axis is missing.
+  if (brand.estimatedTop || branch.estimatedTop) {
+    return adjacent;
+  }
+  return brand.top < branch.top && branch.top - brand.top <= 0.12 && (aligned ?? adjacent);
 }
 
 export function extractShopName(lines: OCRLine[]) {
@@ -970,15 +990,30 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
     }
   }
   const baselineHeight = median([...uniqueLineHeights.values()]);
+  const pricedProductLines = new Set(
+    extractReceiptProductRows(lines.map(({ text }) => text))
+      .flatMap(({ text }) => {
+        const [firstLine, priceLine] = text.split("\n", 2);
+        // A Latin brand can end in a bare number. Require clearer price evidence for those lines.
+        const hasPriceEvidence = priceLine !== undefined ||
+          /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]|[¥￥\\]|\d\s*円/.test(firstLine);
+        return hasPriceEvidence ? [firstLine] : [];
+      }),
+  );
 
   const candidates = lines.flatMap((line, index) => {
     const text = cleanShopName(line.text);
     const compactText = text.replace(/\s+/g, "");
     const top = line.top ?? index / Math.max(lines.length, 1);
-    if (!text || top > shopHeaderHeightRatio || datePattern.test(text) || totalKeywords.test(text)) {
+    const estimatedTop = line.estimatedTop ?? (line.top === undefined);
+    const inHeader = top <= shopHeaderHeightRatio || (estimatedTop && index < 2);
+    if (!text || !inHeader || datePattern.test(text) || totalKeywords.test(text)) {
       return [];
     }
-    if (nonShopNameLine.test(compactText)) {
+    if (nonShopNameLine.test(compactText) || shopGreetingLine.test(compactText)) {
+      return [];
+    }
+    if (pricedProductLines.has(line.text.trim()) && !isReadableBranchLine(compactText)) {
       return [];
     }
     if (/(?:TEL|〒|領収書|領収証|レシート|商品名|品名|品目|明細|小計|税額|お預り|おつり|営業時間|ありがとうございました|お買い上げ|登録番号|適格請求書|担当|レジ|ポイント|クーポン|\d{2,4}[-ー]\d{2,4}|[都道府県市区町丁目番地])/i.test(compactText)) {
@@ -1015,7 +1050,7 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
       Number(hasBranchSuffix) * 18 +
       Number(hasDistinctiveSize) * 5 -
       Number(looksLikeUnrelatedLogoText && hasReadableBranchLine) * 35;
-    return [{ ...line, text, top, score }];
+    return [{ ...line, text, top, score, index, estimatedTop }];
   });
 
   if (candidates.length === 0) {
@@ -1027,58 +1062,30 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
   const nameCandidates = branchCandidate
     ? candidates.filter((candidate) =>
-      candidate === branchCandidate ||
-      (
-        candidate.top < branchCandidate.top &&
-        branchCandidate.top - candidate.top <= 0.12 &&
-        areShopLinesHorizontallyAligned(candidate, branchCandidate)
-      ),
+      candidate === branchCandidate || canPairShopLines(candidate, branchCandidate),
     )
     : candidates;
-  const brandCandidate = [...nameCandidates]
+  const brandCandidates = branchCandidate && !hasInlineShopBrand(branchCandidate.text)
+    ? nameCandidates.filter((candidate) =>
+      candidate !== branchCandidate &&
+      !normalizeReceiptFieldValue(branchCandidate.text).startsWith(normalizeReceiptFieldValue(candidate.text)),
+    )
+    : [];
+  const latinBrandCandidate = brandCandidates
     .filter((candidate) => isLatinBrandLine(candidate.text))
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
-  if (
-    brandCandidate &&
-    branchCandidate &&
-    brandCandidate !== branchCandidate &&
-    nameCandidates.includes(brandCandidate)
-  ) {
+  const brandCandidate = latinBrandCandidate ?? brandCandidates
+    .filter((candidate) => isJapaneseBrandLine(candidate.text))
+    .sort((candidateA, candidateB) =>
+      candidateB.score - candidateA.score || candidateB.top - candidateA.top,
+    )[0];
+  if (brandCandidate && branchCandidate) {
+    const averageConfidence = (brandCandidate.confidence + branchCandidate.confidence) / 2;
     return {
       value: `${brandCandidate.text} ${branchCandidate.text}`.slice(0, 255),
-      confidence: Math.min(
-        100,
-        Math.round((brandCandidate.confidence + branchCandidate.confidence) / 2 + 8),
-      ),
+      confidence: Math.min(100, Math.round(averageConfidence + (latinBrandCandidate ? 8 : 0))),
       shopNameConfidence: {
         brand: brandCandidate.confidence,
-        branch: branchCandidate.confidence,
-      },
-    };
-  }
-
-  const japaneseBrandCandidate = branchCandidate
-    ? [...nameCandidates]
-      .filter((candidate) =>
-        candidate !== branchCandidate &&
-        candidate.top < branchCandidate.top &&
-        branchCandidate.top - candidate.top <= 0.12 &&
-        areShopLinesHorizontallyAligned(candidate, branchCandidate) &&
-        /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(candidate.text) &&
-        !isReadableBranchLine(candidate.text.replace(/\s+/g, "")),
-      )
-      .sort((candidateA, candidateB) =>
-        candidateB.score - candidateA.score || candidateB.top - candidateA.top,
-      )[0]
-    : undefined;
-  if (japaneseBrandCandidate && branchCandidate) {
-    return {
-      value: `${japaneseBrandCandidate.text} ${branchCandidate.text}`.slice(0, 255),
-      confidence: Math.round(
-        (japaneseBrandCandidate.confidence + branchCandidate.confidence) / 2,
-      ),
-      shopNameConfidence: {
-        brand: japaneseBrandCandidate.confidence,
         branch: branchCandidate.confidence,
       },
     };
@@ -1100,7 +1107,8 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   )[0];
   const selectedIsBranchOnly = selected === branchCandidate &&
     /店$/.test(selected.text.replace(/\s+/g, "")) &&
-    !/商店$/.test(selected.text.replace(/\s+/g, ""));
+    !/商店$/.test(selected.text.replace(/\s+/g, "")) &&
+    !hasInlineShopBrand(selected.text);
   return {
     value: selected.text.slice(0, 255),
     confidence: selectedIsBranchOnly
@@ -1112,6 +1120,20 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
 function isReadableBranchLine(value: string) {
   return /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(value) &&
     /(?:店|商店|ストア|マーケット|薬局|銀行)$/.test(value);
+}
+
+function hasInlineShopBrand(value: string) {
+  const separator = value.indexOf(" ");
+  const branch = separator >= 2 ? value.slice(separator + 1) : "";
+  return Boolean(getLatinBrandPart(value)) || (branch.length >= 2 && isReadableBranchLine(branch));
+}
+
+function isJapaneseBrandLine(value: string) {
+  const compact = value.replace(/\s+/g, "");
+  return /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(compact) &&
+    /^[A-Za-z0-9ぁ-ゖァ-ヶ一-龯々〆ヵヶー・&.'’-]+$/.test(compact) &&
+    !/(?:です|ます|ました|ません|ください|ませ)$/.test(compact) &&
+    !isReadableBranchLine(compact);
 }
 
 function isLatinBrandLine(value: string) {
@@ -1193,14 +1215,16 @@ function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandi
   const value = brand && branch
     ? `${brand}${branch.value.slice(getLatinBrandPart(branch.value).length)}`.slice(0, 255)
     : bestSpelling.value;
-  const branchConfidence = branch?.shopNameConfidence?.branch ?? branch?.confidence;
-  const confidence = branch && branchConfidence !== undefined
+  const branchConfidence = branch?.shopNameConfidence?.branch ?? branch?.confidence ??
+    bestSpelling.shopNameConfidence?.branch;
+  const confidence = branchConfidence !== undefined
     ? Math.round((selected.confidence + branchConfidence) / 2)
     : selected.confidence;
   const compactBestSpelling = bestSpelling.value.normalize("NFKC").replace(/\s+/g, "");
   const branchOnly = !brand &&
     !bestSpelling.shopNameConfidence &&
-    isReadableBranchLine(compactBestSpelling);
+    isReadableBranchLine(compactBestSpelling) &&
+    !hasInlineShopBrand(bestSpelling.value);
   return {
     value,
     confidence: branchOnly ? Math.min(65, confidence) : confidence,
