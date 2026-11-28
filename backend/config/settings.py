@@ -113,6 +113,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "accounts.exceptions.session_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "accounts.authentication.CsrfSessionAuthentication",
     ],

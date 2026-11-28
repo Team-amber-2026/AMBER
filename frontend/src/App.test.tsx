@@ -65,7 +65,7 @@ async function expectPath(path: string) {
 }
 
 function unauthenticated() {
-  vi.mocked(auth.fetchCurrentUser).mockRejectedValue({ isAxiosError: true, response: { status: 403 } });
+  vi.mocked(auth.fetchCurrentUser).mockRejectedValue({ isAxiosError: true, response: { status: 403, data: { code: "not_authenticated" } } });
 }
 
 beforeEach(() => {

@@ -39,12 +39,12 @@ export function readableError(error: unknown) {
     .join("\n");
 }
 
-export function readableErrorStatus(error: unknown) {
-  if (!isAxiosErrorResponse(error)) {
-    return undefined;
-  }
+export function isUnauthenticated(error: unknown) {
+  if (!axios.isAxiosError<ErrorResponse>(error)) return false;
 
-  return error.response?.status;
+  const response = error.response;
+  return response?.status === 401 ||
+    (response?.status === 403 && response.data?.code === "not_authenticated");
 }
 
 function isAxiosErrorResponse(error: unknown): error is AxiosError<unknown> {

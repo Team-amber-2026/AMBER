@@ -5,6 +5,7 @@ from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
+from rest_framework.exceptions import NotAuthenticated
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -37,10 +38,7 @@ class CurrentUserView(APIView):
             )
 
         if not request.user.is_authenticated:
-            return Response(
-                {"detail": "認証されていません。"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            raise NotAuthenticated("認証されていません。")
 
         return Response(UserSerializer(request.user).data)
 
