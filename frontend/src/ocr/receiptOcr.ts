@@ -33,7 +33,7 @@ const currencyAmountPattern = /(?:¥|￥|\\|Y)\s*([0-9]{1,3}(?:[,.]\s?[0-9]{3})+
 const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9]+)(?![0-9A-Za-z])/g;
 const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?|ポイント|マイル|残\s*高|獲\s*得|利用|使用|還\s*元|加\s*算)/;
 const bareAmountLine = /^(?:[¥￥Y\\]\s*)?\d{1,3}(?:[,.]\s?\d{3})*(?:[,.]?\d+)?\s*(?:円)?(?:[※\-ー—~～])?$/;
-const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|商品名|品名|品目|明細|小計|税額|お預り|おつり|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ)/;
+const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|商品名|品名|品目|明細|小計|税額|お預り|おつり|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ|お電話|お問い合わせ|営業日|営業時間|午前|午後|させて頂いて|させていただいて|頂いております|いただいております)/;
 // Keep enough pixels for small receipt characters. The previous 2200px limit
 // could reduce a typical 3024x4032 phone photo to roughly 1650x2200.
 const maxReceiptImageSide = 3200;
@@ -298,12 +298,33 @@ async function runReceiptOcrExclusive(
     const binaryText = binaryResult?.data.text.trim() ?? "";
     const headerText = headerResult?.data.text.trim() ?? "";
     const invertedHeaderText = invertedHeaderResult?.data.text.trim() ?? "";
-    const originalLines = extractLines(originalResult.data, originalText, preparedImage.height);
+    const originalLines = extractLines(
+      originalResult.data,
+      originalText,
+      preparedImage.height,
+      0,
+      preparedImage.height,
+      preparedImage.width,
+    );
     const enhancedLines = enhancedResult
-      ? extractLines(enhancedResult.data, enhancedText, preparedImage.height)
+      ? extractLines(
+        enhancedResult.data,
+        enhancedText,
+        preparedImage.height,
+        0,
+        preparedImage.height,
+        preparedImage.width,
+      )
       : [];
     const binaryLines = binaryResult
-      ? extractLines(binaryResult.data, binaryText, preparedImage.height)
+      ? extractLines(
+        binaryResult.data,
+        binaryText,
+        preparedImage.height,
+        0,
+        preparedImage.height,
+        preparedImage.width,
+      )
       : [];
     const headerLines = headerResult
       ? extractLines(
@@ -312,6 +333,7 @@ async function runReceiptOcrExclusive(
         headerImage ? headerImage.height / shopHeaderHeightRatio : preparedImage.height,
         0,
         headerImage?.height ?? 0,
+        headerImage?.width ?? preparedImage.width,
       )
       : [];
     const invertedHeaderLines = invertedHeaderResult
@@ -323,6 +345,7 @@ async function runReceiptOcrExclusive(
           : preparedImage.height,
         0,
         invertedHeaderImage?.height ?? 0,
+        invertedHeaderImage?.width ?? preparedImage.width,
       )
       : [];
     releaseReceiptCanvas(headerImage);
@@ -359,6 +382,9 @@ async function runReceiptOcrExclusive(
           focusedBodyResult.data,
           focusedBodyText,
           focusedBodyImage.height,
+          0,
+          focusedBodyImage.height,
+          focusedBodyImage.width,
         ).map((line) => ({
           ...line,
           top: 0.18 + (line.top ?? 0) * 0.65,
@@ -485,6 +511,9 @@ async function runReceiptOcrExclusive(
           focusedTotalResult.data,
           focusedTotalText,
           focusedTotalImage.height,
+          0,
+          focusedTotalImage.height,
+          focusedTotalImage.width,
         );
         releaseReceiptCanvas(focusedTotalImage);
         focusedTotalImage = null;
@@ -757,6 +786,8 @@ export type OCRLine = {
   confidence: number;
   top?: number;
   height?: number;
+  left?: number;
+  right?: number;
 };
 
 function extractLines(
@@ -765,6 +796,7 @@ function extractLines(
   pageHeight: number,
   yOffset = 0,
   regionHeight = pageHeight,
+  pageWidth = pageHeight,
 ): OCRLine[] {
   const detectedLines =
     data.blocks?.flatMap((block) =>
@@ -774,6 +806,8 @@ function extractLines(
           confidence: line.confidence,
           top: (yOffset + line.bbox.y0) / pageHeight,
           height: line.bbox.y1 - line.bbox.y0,
+          left: line.bbox.x0 / pageWidth,
+          right: line.bbox.x1 / pageWidth,
         })),
       ),
     ) ?? [];
@@ -791,6 +825,31 @@ function extractLines(
     confidence: data.confidence,
     top: (yOffset + (index / Math.max(rawLines.length, 1)) * regionHeight) / pageHeight,
   }));
+}
+
+function areShopLinesHorizontallyAligned(left: OCRLine, right: OCRLine) {
+  if (left === right) {
+    return true;
+  }
+  const leftStart = left.left;
+  const leftEnd = left.right;
+  const rightStart = right.left;
+  const rightEnd = right.right;
+  if (
+    leftStart === undefined ||
+    leftEnd === undefined ||
+    rightStart === undefined ||
+    rightEnd === undefined ||
+    !Number.isFinite(leftStart) ||
+    !Number.isFinite(leftEnd) ||
+    !Number.isFinite(rightStart) ||
+    !Number.isFinite(rightEnd)
+  ) {
+    return false;
+  }
+  const leftCenter = (leftStart + leftEnd) / 2;
+  const rightCenter = (rightStart + rightEnd) / 2;
+  return Math.abs(leftCenter - rightCenter) <= 0.25;
 }
 
 export function extractShopName(lines: OCRLine[]) {
@@ -816,10 +875,12 @@ function resolveReceiptFieldCandidate<T extends string | number>(
     }
 
     const key = normalizeReceiptFieldValue(value);
-    const group = groups.get(key) ?? (spelling &&
-      [...groups.values()].find((votes) => votes.every((vote) =>
-        normalizeReceiptFieldValue(vote.value) === key || spelling.matches(vote.value, value),
-      )));
+    const exactGroup = groups.get(key);
+    const group = exactGroup ?? (spelling
+      ? [...groups.values()].find((votes) =>
+        votes.every((vote) => spelling.matches(vote.value, value)),
+      )
+      : undefined);
     const vote = { ...candidate, value, fromHeader };
     if (group) {
       group.push(vote);
@@ -939,14 +1000,24 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   const branchCandidate = [...candidates]
     .filter((candidate) => isReadableBranchLine(candidate.text.replace(/\s+/g, "")))
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
-  const brandCandidate = [...candidates]
+  const nameCandidates = branchCandidate
+    ? candidates.filter((candidate) =>
+      candidate === branchCandidate ||
+      (
+        candidate.top < branchCandidate.top &&
+        branchCandidate.top - candidate.top <= 0.12 &&
+        areShopLinesHorizontallyAligned(candidate, branchCandidate)
+      ),
+    )
+    : candidates;
+  const brandCandidate = [...nameCandidates]
     .filter((candidate) => isLatinBrandLine(candidate.text))
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
   if (
     brandCandidate &&
     branchCandidate &&
     brandCandidate !== branchCandidate &&
-    brandCandidate.top <= branchCandidate.top
+    nameCandidates.includes(brandCandidate)
   ) {
     return {
       value: `${brandCandidate.text} ${branchCandidate.text}`.slice(0, 255),
@@ -961,23 +1032,55 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
     };
   }
 
+  const japaneseBrandCandidate = branchCandidate
+    ? [...nameCandidates]
+      .filter((candidate) =>
+        candidate !== branchCandidate &&
+        candidate.top < branchCandidate.top &&
+        branchCandidate.top - candidate.top <= 0.12 &&
+        areShopLinesHorizontallyAligned(candidate, branchCandidate) &&
+        /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(candidate.text) &&
+        !isReadableBranchLine(candidate.text.replace(/\s+/g, "")),
+      )
+      .sort((candidateA, candidateB) =>
+        candidateB.score - candidateA.score || candidateB.top - candidateA.top,
+      )[0]
+    : undefined;
+  if (japaneseBrandCandidate && branchCandidate) {
+    return {
+      value: `${japaneseBrandCandidate.text} ${branchCandidate.text}`.slice(0, 255),
+      confidence: Math.round(
+        (japaneseBrandCandidate.confidence + branchCandidate.confidence) / 2,
+      ),
+      shopNameConfidence: {
+        brand: japaneseBrandCandidate.confidence,
+        branch: branchCandidate.confidence,
+      },
+    };
+  }
+
   // If the receipt uses one font size throughout, the first plausible line in
   // the header is a stronger signal than a later product line with a higher
   // OCR confidence. Give the first visual candidate a bounded bonus so that a
   // clearly higher-confidence header candidate can still win.
-  const firstVisualCandidate = [...candidates].sort(
+  const firstVisualCandidate = [...nameCandidates].sort(
     (candidateA, candidateB) => candidateA.top - candidateB.top,
   )[0];
   if (firstVisualCandidate) {
     firstVisualCandidate.score += 30;
   }
 
-  const selected = candidates.sort((candidateA, candidateB) =>
+  const selected = nameCandidates.sort((candidateA, candidateB) =>
     candidateB.score - candidateA.score || candidateA.top - candidateB.top,
   )[0];
+  const selectedIsBranchOnly = selected === branchCandidate &&
+    /店$/.test(selected.text.replace(/\s+/g, "")) &&
+    !/商店$/.test(selected.text.replace(/\s+/g, ""));
   return {
     value: selected.text.slice(0, 255),
-    confidence: selected.confidence,
+    confidence: selectedIsBranchOnly
+      ? Math.min(65, selected.confidence)
+      : selected.confidence,
   };
 }
 
@@ -1044,14 +1147,20 @@ function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandi
   const bestSpelling = selected.votes.sort((left, right) =>
     right.confidence - left.confidence || Number(right.fromHeader) - Number(left.fromHeader),
   )[0];
+  const brand = getLatinBrandPart(bestSpelling.value);
 
-  // A readable branch can come from a pass that used a different brand spelling.
-  const branch = votes.filter((vote) => getBranchPart(vote.value))
+  // Only use a branch that belongs to the selected brand spelling group.
+  // Combining the highest-confidence branch from an unrelated store can
+  // manufacture a store name that no OCR pass actually saw.
+  const branch = votes.filter((vote) =>
+    getBranchPart(vote.value) &&
+    getLatinBrandPart(vote.value).length > 0 &&
+    areSimilarShopCandidates(vote.value, bestSpelling.value),
+  )
     .sort((left, right) =>
       (right.shopNameConfidence?.branch ?? right.confidence) -
       (left.shopNameConfidence?.branch ?? left.confidence),
     )[0];
-  const brand = getLatinBrandPart(bestSpelling.value);
   const value = brand && branch
     ? `${brand}${branch.value.slice(getLatinBrandPart(branch.value).length)}`.slice(0, 255)
     : bestSpelling.value;
@@ -1059,7 +1168,14 @@ function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandi
   const confidence = branch && branchConfidence !== undefined
     ? Math.round((selected.confidence + branchConfidence) / 2)
     : selected.confidence;
-  return { value, confidence };
+  const compactBestSpelling = bestSpelling.value.normalize("NFKC").replace(/\s+/g, "");
+  const branchOnly = !brand &&
+    !bestSpelling.shopNameConfidence &&
+    isReadableBranchLine(compactBestSpelling);
+  return {
+    value,
+    confidence: branchOnly ? Math.min(65, confidence) : confidence,
+  };
 }
 
 function levenshteinDistance(left: string, right: string) {
@@ -1276,8 +1392,12 @@ function extractLabeledTotals(lines: string[]) {
 }
 
 function extractInferredTotalAmount(lines: string[]) {
+  const hasProductRows = extractReceiptProductRows(lines).length > 0;
   for (const line of lines) {
     if (/(?:%|％)\s*(?:対象|対|TH|T\s*H)/i.test(line)) {
+      if (hasProductRows) {
+        return null;
+      }
       const amounts = extractCurrencyAmounts(line);
       if (amounts.length > 0) {
         return Math.max(...amounts);
@@ -1347,12 +1467,17 @@ function isNonMonetaryTotalLine(value: string) {
 }
 
 function cleanShopName(value: string) {
-  const normalized = value.normalize("NFKC").trim();
+  const normalized = value.normalize("NFKC")
+    .replace(/0\d{1,4}[-ー−]\s*\d{1,4}[-ー−]\s*\d{3,4}/g, " ")
+    .trim();
   const withoutLeadingNoise = normalized.replace(
     /^[^A-Za-zぁ-ゖァ-ヶ一-龯々〆ヵヶ0-9]+/,
     "",
   );
-  return withoutLeadingNoise.replace(/\s+/g, " ").trim();
+  return withoutLeadingNoise
+    .replace(/((?:店|商店|ストア|マーケット|薬局|銀行))\s+[A-Za-z0-9®©™]{1,3}\s*$/u, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractCurrencyAmounts(line: string) {
@@ -1437,6 +1562,14 @@ function extractRepeatedCurrencyAmount(lines: string[]) {
 
   for (const line of lines) {
     if (nonTotalAmountLine.test(line)) {
+      continue;
+    }
+    if (totalKeywords.test(line)) {
+      continue;
+    }
+    const parsedProduct = parseReceiptProductPrice(line);
+    if (parsedProduct?.name) {
+      // Repeated product prices are not evidence of the final total.
       continue;
     }
     for (const amount of new Set(extractCurrencyAmounts(line))) {

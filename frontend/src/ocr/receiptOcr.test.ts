@@ -85,10 +85,63 @@ describe("receipt OCR field extraction", () => {
   it("combines a readable Latin brand with its branch name", () => {
     expect(
       extractShopName([
-        { text: "FamilyMart", confidence: 92, top: 0.04, height: 42 },
-        { text: "五条大宮店", confidence: 88, top: 0.13, height: 24 },
+        { text: "FamilyMart", confidence: 92, top: 0.04, height: 42, left: 0.3, right: 0.7 },
+        { text: "五条大宮店", confidence: 88, top: 0.13, height: 24, left: 0.2, right: 0.5 },
       ]),
     ).toBe("FamilyMart 五条大宮店");
+  });
+
+  it("combines a Japanese brand and branch while excluding nearby store information", () => {
+    expect(
+      extractShopName([
+        { text: "マツモト", confidence: 62, top: 0.04, height: 36, left: 0.3, right: 0.7 },
+        {
+          text: "西小路店 B® 075-811-3458",
+          confidence: 88,
+          top: 0.09,
+          height: 24,
+          left: 0.2,
+          right: 0.48,
+        },
+        { text: "お電話のお問い合わせは、営業日の", confidence: 99, top: 0.18, height: 22 },
+        { text: "午前9時から午後8時までと", confidence: 99, top: 0.22, height: 22 },
+        { text: "させて頂いております。", confidence: 99, top: 0.26, height: 22 },
+      ]),
+    ).toBe("マツモト 西小路店");
+  });
+
+  it("does not mistake contact and business-hour text for the shop name", () => {
+    expect(
+      extractShopName([
+        { text: "お電話のお問い合わせは、営業日の", confidence: 99, top: 0.05 },
+        { text: "午前9時から午後8時までと", confidence: 99, top: 0.12 },
+        { text: "させて頂いております。", confidence: 99, top: 0.18 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("does not combine an unrelated screen label with a receipt branch", () => {
+    expect(
+      extractShopName([
+        { text: "Vscode", confidence: 99, top: 0.1, left: 0.82, right: 0.96 },
+        {
+          text: "西小路店 B® 075-811-3458",
+          confidence: 90,
+          top: 0.13,
+          left: 0.2,
+          right: 0.48,
+        },
+      ]),
+    ).toBe("西小路店");
+  });
+
+  it("does not combine a distant header label with a receipt branch", () => {
+    expect(
+      extractShopName([
+        { text: "Vscode", confidence: 99, top: 0.01, left: 0.35, right: 0.65 },
+        { text: "西小路店", confidence: 90, top: 0.28, left: 0.3, right: 0.55 },
+      ]),
+    ).toBe("西小路店");
   });
 
   it("prefers the raw OCR shop name when a plausible full-text candidate exists", () => {
@@ -160,14 +213,21 @@ describe("receipt OCR field extraction", () => {
 
   it("uses a repeated tax-inclusive amount when the total label is unreadable", () => {
     const text = [
-      "= B01 ¥746",
-      "8 % T H ¥746)",
-      "内 消費 税 等 ¥55)",
-      "51) ¥5,050",
-      "koh ¥4,304",
+      "8 % 対象 ¥746)",
+      "内消費税等 ¥55)",
     ].join("\n");
 
     expect(extractTotalAmount(text)).toBe(746);
+  });
+
+  it("does not mistake a product's taxable amount for the receipt total", () => {
+    const text = [
+      "※名物厚切ローストンカツ ¥398",
+      "(外8% 対象 ¥398)",
+      "外8% ¥31",
+    ].join("\n");
+
+    expect(extractTotalAmount(text)).toBeNull();
   });
 
   it("handles a misrecognized total label and the following tax-base line", () => {
@@ -270,14 +330,23 @@ describe("receipt OCR field extraction", () => {
       .toEqual({ value: 755, confidence: 82, evidence: "labeledTotal" });
   });
 
-  it("marks a repeated product price as inferred evidence", () => {
+  it("does not mark repeated product prices as inferred totals", () => {
     const lines = [
       { text: "牛乳 ¥198", confidence: 80 },
       { text: "チーズ ¥198", confidence: 80 },
     ];
     const text = lines.map((line) => line.text).join("\n");
     expect(extractTotalCandidate(text, lines, 80))
-      .toEqual({ value: 198, confidence: 60, evidence: "inferredTotal" });
+      .toEqual({ value: null, confidence: 0 });
+  });
+
+  it("does not infer a total from repeated prices on different product rows", () => {
+    const lines = [
+      { text: "牛乳 ¥198", confidence: 90 },
+      { text: "豆乳 ¥198", confidence: 90 },
+    ];
+    expect(extractTotalCandidate(lines.map((line) => line.text).join("\n"), lines, 90))
+      .toEqual({ value: null, confidence: 0 });
   });
 
   it("does not use cash tendered or change when the total label is missing", () => {
@@ -415,6 +484,29 @@ describe("receipt OCR recognition passes", () => {
     return new File([], "receipt.png", { type: "image/png" });
   }
 
+  function mockOcrResultWithLines(text: string, confidence: number) {
+    return {
+      data: {
+        text,
+        confidence,
+        blocks: [{
+          paragraphs: [{
+            lines: text.split("\n").map((line, index) => ({
+              text: line,
+              confidence,
+              bbox: {
+                x0: 40,
+                x1: 160,
+                y0: index * 30,
+                y1: index * 30 + 20,
+              },
+            })),
+          }],
+        }],
+      },
+    };
+  }
+
   it.each([
     ["FamilyMartt", 60, "FamilyMart", 100, "FamilyMart", 100],
     ["FamilyMartt\n五条大宮店", 60, "FamilyMart", 100, "FamilyMart 五条大宮店", 80],
@@ -424,8 +516,11 @@ describe("receipt OCR recognition passes", () => {
     fullPageName, fullPageConfidence, headerName, headerConfidence, expectedName, expectedConfidence,
   ) => {
     const image = mockReceiptImage();
-    const fullPage = { data: { text: `${fullPageName}\n合計 ¥755`, confidence: fullPageConfidence } };
-    const header = { data: { text: headerName, confidence: headerConfidence } };
+    const fullPage = mockOcrResultWithLines(
+      `${fullPageName}\n合計 ¥755`,
+      fullPageConfidence,
+    );
+    const header = mockOcrResultWithLines(headerName, headerConfidence);
     recognize
       .mockResolvedValueOnce(fullPage)
       .mockResolvedValueOnce(fullPage)
@@ -440,6 +535,49 @@ describe("receipt OCR recognition passes", () => {
     });
   });
 
+  it("does not combine a FamilyMart brand with a different header store branch", async () => {
+    const image = mockReceiptImage();
+    const familyMart = {
+      data: { text: "FamilyMart\n合計 ¥755", confidence: 100 },
+    };
+    const lawsonBranch = {
+      data: {
+        text: "Lawson\n京都店",
+        confidence: 100,
+      },
+    };
+    recognize
+      .mockResolvedValueOnce(familyMart)
+      .mockResolvedValueOnce(familyMart)
+      .mockResolvedValueOnce(familyMart)
+      .mockResolvedValueOnce(lawsonBranch)
+      .mockResolvedValueOnce(lawsonBranch)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    const result = await runReceiptOcr(image);
+    expect(result.shop_name).not.toBe("FamilyMart 京都店");
+    expect(result.shop_name).not.toBe("Lawson 五条大宮店");
+  });
+
+  it("keeps contact text in the OCR body without selecting it as the shop", async () => {
+    const image = mockReceiptImage();
+    const text = [
+      "Que",
+      "西小路店 B® 075-811-3458",
+      "お電話のお問い合わせは、営業日の",
+      "午前9時から午後8時までと",
+      "させて頂いております。",
+      "合計 ¥429",
+    ].join("\n");
+    recognize.mockResolvedValue({ data: { text, confidence: 95 } });
+
+    const result = await runReceiptOcr(image);
+
+    expect(result.shop_name).toBe("西小路店");
+    expect(result.field_confidence.shop_name).toBeLessThanOrEqual(65);
+    expect(result.raw_ocr_text).toContain("お電話のお問い合わせは、営業日の");
+  });
+
   it("includes branch confidence when combining a brand with a low-confidence branch", async () => {
     const image = mockReceiptImage();
     const fullPage = { data: { text: "合計 ¥755", confidence: 100 } };
@@ -450,8 +588,8 @@ describe("receipt OCR recognition passes", () => {
         blocks: [{
           paragraphs: [{
             lines: [
-              { text: "FamilyMart", confidence: 100, bbox: { y0: 0, y1: 20 } },
-              { text: "五条大宮店", confidence: 30, bbox: { y0: 30, y1: 50 } },
+              { text: "FamilyMart", confidence: 100, bbox: { x0: 60, x1: 140, y0: 0, y1: 20 } },
+              { text: "五条大宮店", confidence: 30, bbox: { x0: 60, x1: 140, y0: 30, y1: 50 } },
             ],
           }],
         }],
