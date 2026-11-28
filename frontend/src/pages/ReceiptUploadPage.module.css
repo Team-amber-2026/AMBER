@@ -78,15 +78,34 @@
   border-radius: 8px;
   background: #fff;
   text-align: center;
+}
+
+.desktopDropArea {
   cursor: pointer;
 }
 
-.dropArea input {
+.desktopDropArea:focus-within {
+  outline: 2px solid #25634d;
+  outline-offset: 2px;
+}
+
+.desktopFileInput {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.sourceActions {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.sourceActions button {
+  min-height: 48px;
+  font-weight: 700;
 }
 
 .dropArea strong,
@@ -164,7 +183,8 @@
   max-height: 520px;
   margin-inline: auto;
   cursor: crosshair;
-  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -179,6 +199,8 @@
 }
 
 .cropSelection {
+  min-width: 8px;
+  min-height: 8px;
   position: absolute;
   z-index: 1;
   border: 2px solid #ffdc78;
@@ -203,6 +225,15 @@
   margin: 8px 0 0;
   color: #697066;
   font-size: 14px;
+}
+
+.touchHint {
+  display: none;
+}
+
+@media (any-pointer: coarse) {
+  .touchHint { display: inline; }
+  .mouseHint { display: none; }
 }
 
 .emptyPreview {

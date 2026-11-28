@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { ChangeEvent, PointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -14,6 +14,8 @@ const maxImageSize = 10 * 1024 * 1024;
 const lowConfidenceThreshold = 70;
 const fullImageCrop: ReceiptImageCrop = { x: 0, y: 0, width: 1, height: 1 };
 const minimumCropSize = 0.025;
+const longPressMs = 500;
+const touchSlopPx = 8;
 const initialConfirmForm: ExpenseSavePayload = {
   shop_name: "",
   purchased_at: "",
@@ -26,16 +28,18 @@ export default function ReceiptUploadPage() {
   const navigate = useNavigate();
   const saveInFlight = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const analysisGenerationRef = useRef(0);
   const analysisControllerRef = useRef<AbortController | null>(null);
   const cropFrameRef = useRef<HTMLDivElement>(null);
   const cropDragRef = useRef<{
     x: number;
     y: number;
-    previousCrop: ReceiptImageCrop;
   } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [crop, setCrop] = useState<ReceiptImageCrop>(fullImageCrop);
+  const [draftCrop, setDraftCrop] = useState<ReceiptImageCrop | null>(null);
+  const visibleCrop = draftCrop ?? crop;
   const [previewUrl, setPreviewUrl] = useState("");
   const [result, setResult] = useState<ReceiptOCRResult | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -44,6 +48,7 @@ export default function ReceiptUploadPage() {
   const [classificationError, setClassificationError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isReadingCapture, setIsReadingCapture] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
@@ -89,32 +94,55 @@ export default function ReceiptUploadPage() {
     };
   }, []);
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    analysisGenerationRef.current += 1;
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const generation = ++analysisGenerationRef.current;
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     resetAnalysis();
     setCrop(fullImageCrop);
 
-    if (!file) {
-      setSelectedFile(null);
-      return;
-    }
-
     if (!file.type.startsWith("image/")) {
+      input.value = "";
       setSelectedFile(null);
       setError("画像ファイルを選択してください。");
       return;
     }
 
     if (file.size > maxImageSize) {
+      input.value = "";
       setSelectedFile(null);
       setError("画像サイズは10MB以下にしてください。");
       return;
     }
 
-    setSelectedFile(file);
+    if (input !== cameraInputRef.current) {
+      input.value = "";
+      setSelectedFile(file);
+      return;
+    }
+
+    setIsReadingCapture(true);
+    try {
+      // Copy the capture before clearing the input, which can release the temporary file.
+      const bytes = await file.arrayBuffer();
+      if (generation !== analysisGenerationRef.current) return;
+      if (bytes.byteLength === 0) throw new Error("Empty camera capture");
+      setSelectedFile(new File([bytes], file.name, { type: file.type, lastModified: file.lastModified }));
+    } catch {
+      if (generation === analysisGenerationRef.current) {
+        setSelectedFile(null);
+        setError("撮影した画像を開けませんでした。もう一度撮影するか、画像を選択してください。");
+      }
+    } finally {
+      if (generation === analysisGenerationRef.current) {
+        input.value = "";
+        setIsReadingCapture(false);
+      }
+    }
   }
 
   async function handleAnalyze() {
@@ -248,6 +276,9 @@ export default function ReceiptUploadPage() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = "";
+    }
   }
 
   function getCropPoint(clientX: number, clientY: number) {
@@ -273,43 +304,41 @@ export default function ReceiptUploadPage() {
       width: Math.abs(point.x - start.x),
       height: Math.abs(point.y - start.y),
     };
-    setCrop(nextCrop);
+    setDraftCrop(nextCrop);
     return nextCrop;
   }
 
-  function handleCropPointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (isBusy) {
-      return;
-    }
-    const point = getCropPoint(event.clientX, event.clientY);
+  function startCropDrag(clientX: number, clientY: number) {
+    const point = getCropPoint(clientX, clientY);
     if (!point) {
       return;
     }
-    cropDragRef.current = { ...point, previousCrop: crop };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    setCrop({ ...point, width: 0, height: 0 });
+    cropDragRef.current = point;
+    setDraftCrop({ ...point, width: 0, height: 0 });
   }
 
-  function handleCropPointerUp(event: PointerEvent<HTMLDivElement>) {
+  function handleCropPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (isBusy || event.pointerType === "touch" || event.button !== 0) return;
+    startCropDrag(event.clientX, event.clientY);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function finishCropDrag(clientX: number, clientY: number) {
     if (!cropDragRef.current) {
       return;
     }
-    const nextCrop = updateCropDrag(event.clientX, event.clientY);
-    const previousCrop = cropDragRef.current.previousCrop;
-    cropDragRef.current = null;
-    if (!nextCrop || nextCrop.width < minimumCropSize || nextCrop.height < minimumCropSize) {
-      setCrop(previousCrop);
-    } else if (!areCropsEqual(previousCrop, nextCrop)) {
+    const nextCrop = updateCropDrag(clientX, clientY);
+    cancelCropDrag();
+    if (nextCrop && nextCrop.width >= minimumCropSize && nextCrop.height >= minimumCropSize
+        && !areCropsEqual(crop, nextCrop)) {
+      setCrop(nextCrop);
       resetAnalysis();
     }
   }
 
-  function handleCropPointerCancel() {
-    const previousCrop = cropDragRef.current?.previousCrop;
+  function cancelCropDrag() {
     cropDragRef.current = null;
-    if (previousCrop) {
-      setCrop(previousCrop);
-    }
+    setDraftCrop(null);
   }
 
   function resetCropSelection() {
@@ -320,7 +349,82 @@ export default function ReceiptUploadPage() {
   }
 
   const hasSelection = selectedFile !== null;
-  const isBusy = isAnalyzing || isSaving;
+  const isBusy = isReadingCapture || isAnalyzing || isSaving;
+  // Use phone identification, not viewport width or touch support (also present on PCs).
+  const showCameraCapture = /iPhone|iPod|Android.*Mobile/i.test(navigator.userAgent);
+  const ImageSelectionArea = showCameraCapture ? "div" : "label";
+  const startTouchCrop = useEffectEvent(startCropDrag);
+  const moveTouchCrop = useEffectEvent(updateCropDrag);
+  const finishTouchCrop = useEffectEvent(finishCropDrag);
+  const cancelTouchCrop = useEffectEvent(cancelCropDrag);
+
+  useEffect(() => {
+    const frame = cropFrameRef.current;
+    if (!frame || isBusy) return;
+    let start: Touch | undefined;
+    let timer: number | undefined;
+    let selecting = false;
+
+    function clearGesture() {
+      window.clearTimeout(timer);
+      start = undefined;
+      selecting = false;
+    }
+
+    function cancel() {
+      if (selecting) cancelTouchCrop();
+      clearGesture();
+    }
+
+    function touchStart(event: TouchEvent) {
+      cancel();
+      if (event.touches.length !== 1 || (event.target as Element).closest("button")) return;
+      const touch = event.touches[0];
+      start = touch;
+      timer = window.setTimeout(() => {
+        selecting = true;
+        startTouchCrop(touch.clientX, touch.clientY);
+      }, longPressMs);
+    }
+
+    function touchMove(event: TouchEvent) {
+      if (!start) return;
+      const touch = event.touches[0];
+      if (event.touches.length !== 1 || touch.identifier !== start.identifier || !event.cancelable) {
+        cancel();
+        return;
+      }
+      if (selecting) {
+        event.preventDefault();
+        moveTouchCrop(touch.clientX, touch.clientY);
+      } else if (Math.hypot(touch.clientX - start.clientX, touch.clientY - start.clientY) > touchSlopPx) {
+        clearGesture();
+      }
+    }
+
+    function touchEnd(event: TouchEvent) {
+      const touch = event.changedTouches[0];
+      if (selecting && start?.identifier === touch.identifier && event.touches.length === 0) {
+        finishTouchCrop(touch.clientX, touch.clientY);
+      } else if (selecting) {
+        cancelTouchCrop();
+      }
+      clearGesture();
+    }
+
+    frame.addEventListener("touchstart", touchStart, { passive: true });
+    // Only a drag following a long press should consume the browser's scroll gesture.
+    frame.addEventListener("touchmove", touchMove, { passive: false });
+    frame.addEventListener("touchend", touchEnd);
+    frame.addEventListener("touchcancel", cancel);
+    return () => {
+      cancel();
+      frame.removeEventListener("touchstart", touchStart);
+      frame.removeEventListener("touchmove", touchMove);
+      frame.removeEventListener("touchend", touchEnd);
+      frame.removeEventListener("touchcancel", cancel);
+    };
+  }, [previewUrl, isBusy]);
 
   return (
     <main className={styles.shell}>
@@ -347,22 +451,55 @@ export default function ReceiptUploadPage() {
       )}
 
       <section className={styles.uploadPanel} aria-label="レシート画像選択">
-        <label className={styles.dropArea}>
+        <ImageSelectionArea className={`${styles.dropArea} ${showCameraCapture ? "" : styles.desktopDropArea}`}>
           <span className={styles.dropIcon} aria-hidden="true">
             +
           </span>
-          <strong>{hasSelection ? selectedFile.name : "レシート画像を選択"}</strong>
+          <strong>{hasSelection ? selectedFile.name : showCameraCapture ? "レシート画像を選択・撮影" : "レシート画像を選択"}</strong>
+          {showCameraCapture && (
+            <div className={styles.sourceActions}>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isBusy}
+              >
+                画像を選択
+              </button>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isBusy}
+              >
+                カメラで撮影
+              </button>
+            </div>
+          )}
           <small>画像は読み取りにだけ使用し、保存しません。</small>
           <input
             ref={fileInputRef}
             type="file"
+            hidden={showCameraCapture}
+            className={showCameraCapture ? undefined : styles.desktopFileInput}
             aria-label="レシート画像"
             accept="image/*"
-            capture="environment"
             onChange={handleFileChange}
             disabled={isBusy}
           />
-        </label>
+          {showCameraCapture && (
+            <input
+              ref={cameraInputRef}
+              type="file"
+              hidden
+              aria-label="レシートをカメラで撮影"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChange}
+              disabled={isBusy}
+            />
+          )}
+        </ImageSelectionArea>
 
         <div className={styles.previewPanel}>
           {previewUrl ? (
@@ -370,22 +507,23 @@ export default function ReceiptUploadPage() {
               ref={cropFrameRef}
               className={styles.cropFrame}
               onPointerDown={handleCropPointerDown}
-              onPointerMove={(event) => updateCropDrag(event.clientX, event.clientY)}
-              onPointerUp={handleCropPointerUp}
-              onPointerCancel={handleCropPointerCancel}
+              onPointerMove={(event) => { if (event.pointerType !== "touch") updateCropDrag(event.clientX, event.clientY); }}
+              onPointerUp={(event) => { if (event.pointerType !== "touch") finishCropDrag(event.clientX, event.clientY); }}
+              onPointerCancel={(event) => { if (event.pointerType !== "touch") cancelCropDrag(); }}
+              onContextMenu={(event) => event.preventDefault()}
             >
               <img
                 src={previewUrl}
-                alt="選択したレシート画像。ドラッグして読み取り範囲を指定できます"
+                alt="選択したレシート画像"
                 draggable={false}
               />
               <div
                 className={styles.cropSelection}
                 style={{
-                  left: `${crop.x * 100}%`,
-                  top: `${crop.y * 100}%`,
-                  width: `${crop.width * 100}%`,
-                  height: `${crop.height * 100}%`,
+                  left: `${visibleCrop.x * 100}%`,
+                  top: `${visibleCrop.y * 100}%`,
+                  width: `${visibleCrop.width * 100}%`,
+                  height: `${visibleCrop.height * 100}%`,
                 }}
                 aria-hidden="true"
               />
@@ -410,7 +548,8 @@ export default function ReceiptUploadPage() {
 
       {hasSelection && (
         <p className={styles.cropHint}>
-          画像上をドラッグしてOCR範囲を選択します。枠外は読み取りません。
+          <span className={styles.touchHint}>画像上をスワイプするとスクロールします。読み取り範囲は、長押ししてから指を動かして選びます。</span>
+          <span className={styles.mouseHint}>画像上をドラッグして読み取り範囲を選びます。</span>
         </p>
       )}
 
@@ -421,7 +560,7 @@ export default function ReceiptUploadPage() {
           onClick={handleAnalyze}
           disabled={!hasSelection || isBusy}
         >
-          {isAnalyzing ? "解析中..." : "OCR解析へ進む"}
+          {isReadingCapture ? "撮影した画像を準備中…" : isAnalyzing ? "解析中..." : "OCR解析へ進む"}
         </button>
         <button
           type="button"

@@ -211,9 +211,7 @@ describe("saving and expense navigation", () => {
     const image = new File(["receipt"], "receipt.png", { type: "image/png" });
     await userEvent.upload(imageInput, image);
 
-    const previewImage = screen.getByAltText(
-      "選択したレシート画像。ドラッグして読み取り範囲を指定できます",
-    );
+    const previewImage = screen.getByRole("img", { name: "選択したレシート画像" });
     expect((previewImage as HTMLImageElement).draggable).toBe(false);
     const cropFrame = previewImage.parentElement as HTMLDivElement;
     vi.spyOn(cropFrame, "getBoundingClientRect").mockReturnValue({
