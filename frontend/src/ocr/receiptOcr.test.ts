@@ -440,6 +440,14 @@ describe("receipt OCR field extraction", () => {
     )).toBe("テリヤキチキンとたまこ ¥348\nテリヤキチキンとたまご ¥348");
   });
 
+  it("finds both fuzzy pairs when one supplemental row has only one possible match", () => {
+    const base = "こんがり焼きたまこパン ¥348\nこんかり焼きたまごパン ¥348";
+    expect(mergeReceiptOcrText(base, [
+      "こんがり焼きたまごパン ¥348",
+      "こんがり焼ぎたまこパン ¥348",
+    ])).toBe(base);
+  });
+
   it("deduplicates the same product across inline and split price formats", () => {
     expect(mergeReceiptOcrText("牛乳５００ｍｌ\n￥１，９８０", ["牛 乳500ml 1980"]))
       .toBe("牛乳５００ｍｌ\n￥１，９８０");
@@ -511,6 +519,12 @@ describe("receipt OCR recognition passes", () => {
     ["FamilyMartt", 60, "FamilyMart", 100, "FamilyMart", 100],
     ["FamilyMartt\n五条大宮店", 60, "FamilyMart", 100, "FamilyMart 五条大宮店", 80],
     ["FamilyMart 5条店", 60, "FamilyMart", 100, "FamilyMart 5条店", 80],
+    ["DEAN & DELUCA 新宿店", 60, "DEAN & DELUCA", 100, "DEAN & DELUCA 新宿店", 80],
+    ["B-R 31 ICE CREAM 新宿店", 60, "B-R 31 ICE CREAM", 100, "B-R 31 ICE CREAM 新宿店", 80],
+    ["B-R 31 ICE CREAM 5条店", 60, "B-R 31 ICE CREAM", 100, "B-R 31 ICE CREAM 5条店", 80],
+    ["B-R 31 ICE CREAM 5 条店", 60, "B-R 31 ICE CREAM", 100, "B-R 31 ICE CREAM 5 条店", 80],
+    ["AMBER 24 新宿店", 60, "AMBER 24", 100, "AMBER 24 新宿店", 80],
+    ["7-Eleven\n新宿店", 60, "7-Eleven", 100, "7-Eleven 新宿店", 80],
     ["FamilyMart", 95, "FamilyMartt", 70, "FamilyMart", 88],
   ])("selects the shop spelling by confidence and support for %s", async (
     fullPageName, fullPageConfidence, headerName, headerConfidence, expectedName, expectedConfidence,
@@ -576,6 +590,55 @@ describe("receipt OCR recognition passes", () => {
     expect(result.shop_name).toBe("西小路店");
     expect(result.field_confidence.shop_name).toBeLessThanOrEqual(65);
     expect(result.raw_ocr_text).toContain("お電話のお問い合わせは、営業日の");
+  });
+
+  it("keeps differently numbered branches in separate shop groups", async () => {
+    const image = mockReceiptImage();
+    const fullPage = { data: { text: "FamilyMart 6条店\n合計 ¥755", confidence: 60 } };
+    const header = { data: { text: "FamilyMart 6条店", confidence: 60 } };
+    recognize
+      .mockResolvedValueOnce({ data: { text: "FamilyMart 5条店\n合計 ¥755", confidence: 95 } })
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValueOnce(header)
+      .mockResolvedValue({ data: { text: "", confidence: 0 } });
+
+    expect((await runReceiptOcr(image)).shop_name).toBe("FamilyMart 6条店");
+  });
+
+  it.each([false, true])("reserves exact product matches before fuzzy matches (reverse: %s)", async (reverse) => {
+    const image = mockReceiptImage();
+    const text = "こんがり焼きたまこパン ¥348\nこんかり焼きたまごパン ¥348\n合計 ¥696";
+    const fullPage = { data: { text, confidence: 90 } };
+    const supplemental = ["こんがり焼きたまごパン ¥348", "こんがり焼きたまこパン ¥348"];
+    if (reverse) {
+      supplemental.reverse();
+    }
+    const emptyHeader = { data: { text: "", confidence: 0 } };
+    recognize
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(fullPage)
+      .mockResolvedValueOnce(emptyHeader)
+      .mockResolvedValueOnce(emptyHeader)
+      .mockResolvedValueOnce({
+        data: {
+          text: supplemental.join("\n"),
+          confidence: 100,
+          blocks: [{
+            paragraphs: [{
+              lines: supplemental.map((line, index) => ({
+                text: line,
+                confidence: 100,
+                bbox: { y0: 35 + index * 30, y1: 55 + index * 30 },
+              })),
+            }],
+          }],
+        },
+      });
+
+    expect((await runReceiptOcr(image)).raw_ocr_text).toBe(text);
   });
 
   it("includes branch confidence when combining a brand with a low-confidence branch", async () => {

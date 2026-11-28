@@ -34,6 +34,7 @@ const plainAmountPattern = /(?<![0-9A-Za-z])([0-9]{1,3}(?:[,.]\s?[0-9]{3})+|[0-9
 const nonTotalAmountLine = /(?:現\s*金|お\s*預|預\s*り|釣|お\s*つ\s*り|消費\s*税|税\s*額|割引\s*前|小\s*計|前\s*合\s*計|税\s*抜(?:き)?|ポイント|マイル|残\s*高|獲\s*得|利用|使用|還\s*元|加\s*算)/;
 const bareAmountLine = /^(?:[¥￥Y\\]\s*)?\d{1,3}(?:[,.]\s?\d{3})*(?:[,.]?\d+)?\s*(?:円)?(?:[※\-ー—~～])?$/;
 const nonShopNameLine = /(?:単行本|領収書|領収証|レシート|商品名|品名|品目|明細|小計|税額|お預り|おつり|登録番号|適格請求書|[TＴ]\d{13}|ありがとう\s*ござい(?:ます|ました)?|(?:予め\s*)?ご了承ください(?:ませ)?|くださいませ|お電話|お問い合わせ|営業日|営業時間|午前|午後|させて頂いて|させていただいて|頂いております|いただいております)/;
+const latinBrandPrefix = /^[A-Za-z0-9][A-Za-z0-9&.'’ -]*/;
 // Keep enough pixels for small receipt characters. The previous 2200px limit
 // could reduce a typical 3024x4032 phone photo to roughly 1650x2200.
 const maxReceiptImageSide = 3200;
@@ -736,23 +737,47 @@ export function mergeReceiptOcrText(baseText: string, supplementalLines: string[
   const baseLines = baseText.split(/\r?\n/).map((line) => line.trim());
   const result = baseLines.filter(Boolean);
   const baseRows = extractReceiptProductRows(baseLines);
-  const matchedBaseRows = new Set<number>();
+  const exactMatches = new Set<number>();
 
-  for (const supplementalRow of extractReceiptProductRows(supplementalLines)) {
-    const baseRowIndex = baseRows.findIndex((baseRow, index) =>
-      !matchedBaseRows.has(index) &&
-      baseRow.amount === supplementalRow.amount &&
-      (
-        baseRow.name === supplementalRow.name ||
-        differsByKanaVoicing(baseRow.name, supplementalRow.name)
-      ),
+  // Reserve exact matches across the entire supplemental pass before matching OCR variants.
+  const remainingRows = extractReceiptProductRows(supplementalLines).filter((row) => {
+    const index = baseRows.findIndex((baseRow, baseIndex) =>
+      !exactMatches.has(baseIndex) && baseRow.amount === row.amount && baseRow.name === row.name,
     );
-    if (baseRowIndex >= 0) {
-      matchedBaseRows.add(baseRowIndex);
-      continue;
+    if (index < 0) {
+      return true;
     }
+    exactMatches.add(index);
+    return false;
+  });
 
-    result.push(supplementalRow.text);
+  const similarCandidates = remainingRows.map((row) => baseRows.flatMap((baseRow, index) =>
+    !exactMatches.has(index) &&
+    baseRow.amount === row.amount &&
+    differsByKanaVoicing(baseRow.name, row.name) ? [index] : [],
+  ));
+  const similarMatches = new Map<number, number>();
+
+  function matchSimilarRow(rowIndex: number, visited: Set<number>): boolean {
+    for (const baseIndex of similarCandidates[rowIndex]) {
+      if (visited.has(baseIndex)) {
+        continue;
+      }
+      visited.add(baseIndex);
+      // Move an earlier match to another compatible row when both can be retained.
+      const previousRow = similarMatches.get(baseIndex);
+      if (previousRow === undefined || matchSimilarRow(previousRow, visited)) {
+        similarMatches.set(baseIndex, rowIndex);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  for (const [index, row] of remainingRows.entries()) {
+    if (!matchSimilarRow(index, new Set())) {
+      result.push(row.text);
+    }
   }
 
   return result.join("\n");
@@ -1093,7 +1118,7 @@ function isLatinBrandLine(value: string) {
   const normalized = value.normalize("NFKC").replace(/\s+/g, " ").trim();
   const latinCharacters = normalized.match(/[A-Za-z]/g) ?? [];
   return latinCharacters.length >= 5 &&
-    /^[A-Za-z][A-Za-z0-9&.'’ -]{4,}$/.test(normalized) &&
+    latinBrandPrefix.exec(normalized)?.[0] === normalized &&
     !/(?:thank\s+you|receipt|register|total|subtotal)/i.test(normalized);
 }
 
@@ -1104,9 +1129,12 @@ function areSimilarShopCandidates(left: string, right: string) {
     return false;
   }
 
-  const leftBranch = getBranchPart(left);
-  const rightBranch = getBranchPart(right);
-  if (leftBranch && rightBranch && leftBranch !== rightBranch) {
+  const leftBranch = getBranchPart(left, leftBrand);
+  const rightBranch = getBranchPart(right, rightBrand);
+  if (
+    leftBranch && rightBranch &&
+    normalizeReceiptFieldValue(leftBranch) !== normalizeReceiptFieldValue(rightBranch)
+  ) {
     return false;
   }
 
@@ -1118,17 +1146,18 @@ function areSimilarShopCandidates(left: string, right: string) {
 
 function getLatinBrandPart(value: string) {
   const normalized = value.normalize("NFKC").replace(/\s+/g, " ").trim();
-  // Stop at standalone numeric tokens so a branch such as "5条店" is not
-  // mistaken for part of the Latin brand.
-  const match = normalized.match(/^[A-Za-z0-9][A-Za-z0-9&.'’]*(?:-[A-Za-z0-9&.'’]+)*(?: +[A-Za-z][A-Za-z0-9&.'’]*(?:-[A-Za-z0-9&.'’]+)*)*/);
-  const brand = match?.[0]?.trim() ?? "";
+  const prefix = latinBrandPrefix.exec(normalized)?.[0] ?? "";
+  const suffix = normalized.slice(prefix.length);
+  // Keep numbers within the brand and move a trailing number into a branch such as "5条店".
+  const numberStartsBranch = isReadableBranchLine(suffix) &&
+    (!prefix.endsWith(" ") || /^(?:条|丁目|号|番|階)/.test(suffix));
+  const brand = numberStartsBranch ? prefix.trimEnd().replace(/ +\d+(?:-\d+)*$/, "") : prefix.trimEnd();
   return /[A-Za-z]/.test(brand) && brand.length >= 5 ? brand : "";
 }
 
-function getBranchPart(value: string) {
-  const compact = value.normalize("NFKC").replace(/\s+/g, "");
-  const match = compact.match(/[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]+(?:店|商店|ストア|マーケット|薬局|銀行)$/);
-  return match?.[0] ?? "";
+function getBranchPart(value: string, brand = getLatinBrandPart(value)) {
+  const branch = value.slice(brand.length).trim();
+  return isReadableBranchLine(branch) ? branch : "";
 }
 
 function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandidate<string> {
