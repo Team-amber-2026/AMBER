@@ -13,6 +13,7 @@ type FieldCandidate<T> = {
   confidence: number;
   evidence?: "labeledTotal" | "inferredTotal";
   shopNameConfidence?: { brand: number; branch: number };
+  shopNameHasBrand?: true;
 };
 type ReceiptCandidate<T> = {
   candidate: FieldCandidate<T>;
@@ -995,7 +996,7 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   // A bare trailing number can be part of a brand in any writing system.
   const pricedProductLines = new Set(
     extractReceiptProductRows(lines.map(({ text }) => text))
-      .filter((row) => row.hasPriceEvidence)
+      .filter((row) => row.hasPriceEvidence || hasUnmarkedShopPrice(row.name, row.text))
       .map((row) => row.text.split("\n", 1)[0]),
   );
 
@@ -1071,13 +1072,22 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
     : [];
   const branchHasBrand = branchCandidate && (
     hasInlineShopBrand(branchCandidate.text) ||
-    brandCandidates.some((candidate) => shopNameIncludesBrand(branchCandidate.text, candidate.text))
+    brandCandidates.some((candidate) => shopNameIncludesBrand(branchCandidate.text, candidate.text)) ||
+    // If the space might be a name boundary, prefer a clearly stronger complete reading.
+    (hasSpacedBranchPart(branchCandidate.text) && brandCandidates.length > 0 &&
+      brandCandidates.every((candidate) => branchCandidate.confidence - candidate.confidence >= 20))
   );
-  const separateBrandCandidates = branchHasBrand ? [] : brandCandidates;
-  const latinBrandCandidate = separateBrandCandidates
+  if (branchHasBrand) {
+    return {
+      value: branchCandidate.text.slice(0, 255),
+      confidence: branchCandidate.confidence,
+      shopNameHasBrand: true,
+    };
+  }
+  const latinBrandCandidate = brandCandidates
     .filter((candidate) => isLatinBrandLine(candidate.text))
     .sort((candidateA, candidateB) => candidateA.top - candidateB.top)[0];
-  const brandCandidate = latinBrandCandidate ?? separateBrandCandidates
+  const brandCandidate = latinBrandCandidate ?? brandCandidates
     .filter((candidate) => isJapaneseBrandLine(candidate.text))
     .sort((candidateA, candidateB) =>
       candidateB.score - candidateA.score || candidateB.top - candidateA.top,
@@ -1110,8 +1120,7 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   )[0];
   const selectedIsBranchOnly = selected === branchCandidate &&
     /店$/.test(selected.text.replace(/\s+/g, "")) &&
-    !/商店$/.test(selected.text.replace(/\s+/g, "")) &&
-    !branchHasBrand;
+    !/商店$/.test(selected.text.replace(/\s+/g, ""));
   return {
     value: selected.text.slice(0, 255),
     confidence: selectedIsBranchOnly
@@ -1120,9 +1129,21 @@ export function extractShopNameCandidate(lines: OCRLine[]): FieldCandidate<strin
   };
 }
 
+function hasUnmarkedShopPrice(name: string, text: string) {
+  // Use product wording or a price-column gap. Digits alone are ambiguous in a shop name.
+  return /^(?:牛乳|豆乳|食パン|卵|たまご|ヨーグルト|チーズ|バナナ|おにぎり|弁当|お茶|水)$/.test(name) ||
+    (!/(?:スーパー|マート|コンビニ|ストア|商店)/.test(name) &&
+      /(?:\t| {2,})(?:\d{3,}|\d{1,3}(?:[,.]\d{3})+)$/.test(text.normalize("NFKC")));
+}
+
 function isReadableBranchLine(value: string) {
   return /[ぁ-ゖァ-ヶ一-龯々〆ヵヶ]/.test(value) &&
     /(?:店|商店|ストア|マーケット|薬局|銀行)$/.test(value);
+}
+
+function hasSpacedBranchPart(value: string) {
+  const separator = value.indexOf(" ");
+  return separator >= 2 && isReadableBranchLine(value.slice(separator + 1));
 }
 
 function hasInlineShopBrand(value: string) {
@@ -1242,7 +1263,7 @@ function selectShopRepresentation(votes: ReceiptFieldVote<string>[]): FieldCandi
   const branchOnly = !brand &&
     !bestSpelling.shopNameConfidence &&
     isReadableBranchLine(compactBestSpelling) &&
-    !hasInlineShopBrand(bestSpelling.value);
+    !bestSpelling.shopNameHasBrand;
   return {
     value,
     confidence: branchOnly ? Math.min(65, confidence) : confidence,
