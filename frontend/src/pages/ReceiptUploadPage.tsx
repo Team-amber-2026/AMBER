@@ -28,6 +28,7 @@ export default function ReceiptUploadPage() {
   const navigate = useNavigate();
   const saveInFlight = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const analysisGenerationRef = useRef(0);
   const analysisControllerRef = useRef<AbortController | null>(null);
   const cropFrameRef = useRef<HTMLDivElement>(null);
@@ -47,6 +48,7 @@ export default function ReceiptUploadPage() {
   const [classificationError, setClassificationError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isReadingCapture, setIsReadingCapture] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
@@ -92,32 +94,55 @@ export default function ReceiptUploadPage() {
     };
   }, []);
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    analysisGenerationRef.current += 1;
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const generation = ++analysisGenerationRef.current;
     analysisControllerRef.current?.abort();
     analysisControllerRef.current = null;
     resetAnalysis();
     setCrop(fullImageCrop);
 
-    if (!file) {
-      setSelectedFile(null);
-      return;
-    }
-
     if (!file.type.startsWith("image/")) {
+      input.value = "";
       setSelectedFile(null);
       setError("画像ファイルを選択してください。");
       return;
     }
 
     if (file.size > maxImageSize) {
+      input.value = "";
       setSelectedFile(null);
       setError("画像サイズは10MB以下にしてください。");
       return;
     }
 
-    setSelectedFile(file);
+    if (input !== cameraInputRef.current) {
+      input.value = "";
+      setSelectedFile(file);
+      return;
+    }
+
+    setIsReadingCapture(true);
+    try {
+      // Copy the capture before clearing the input, which can release the temporary file.
+      const bytes = await file.arrayBuffer();
+      if (generation !== analysisGenerationRef.current) return;
+      if (bytes.byteLength === 0) throw new Error("Empty camera capture");
+      setSelectedFile(new File([bytes], file.name, { type: file.type, lastModified: file.lastModified }));
+    } catch {
+      if (generation === analysisGenerationRef.current) {
+        setSelectedFile(null);
+        setError("撮影した画像を開けませんでした。もう一度撮影するか、画像を選択してください。");
+      }
+    } finally {
+      if (generation === analysisGenerationRef.current) {
+        input.value = "";
+        setIsReadingCapture(false);
+      }
+    }
   }
 
   async function handleAnalyze() {
@@ -251,6 +276,9 @@ export default function ReceiptUploadPage() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = "";
+    }
   }
 
   function getCropPoint(clientX: number, clientY: number) {
@@ -321,7 +349,10 @@ export default function ReceiptUploadPage() {
   }
 
   const hasSelection = selectedFile !== null;
-  const isBusy = isAnalyzing || isSaving;
+  const isBusy = isReadingCapture || isAnalyzing || isSaving;
+  // Use phone identification, not viewport width or touch support (also present on PCs).
+  const showCameraCapture = /iPhone|iPod|Android.*Mobile/i.test(navigator.userAgent);
+  const ImageSelectionArea = showCameraCapture ? "div" : "label";
   const startTouchCrop = useEffectEvent(startCropDrag);
   const moveTouchCrop = useEffectEvent(updateCropDrag);
   const finishTouchCrop = useEffectEvent(finishCropDrag);
@@ -420,22 +451,55 @@ export default function ReceiptUploadPage() {
       )}
 
       <section className={styles.uploadPanel} aria-label="レシート画像選択">
-        <label className={styles.dropArea}>
+        <ImageSelectionArea className={`${styles.dropArea} ${showCameraCapture ? "" : styles.desktopDropArea}`}>
           <span className={styles.dropIcon} aria-hidden="true">
             +
           </span>
-          <strong>{hasSelection ? selectedFile.name : "レシート画像を選択"}</strong>
+          <strong>{hasSelection ? selectedFile.name : showCameraCapture ? "レシート画像を選択・撮影" : "レシート画像を選択"}</strong>
+          {showCameraCapture && (
+            <div className={styles.sourceActions}>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isBusy}
+              >
+                画像を選択
+              </button>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isBusy}
+              >
+                カメラで撮影
+              </button>
+            </div>
+          )}
           <small>画像は読み取りにだけ使用し、保存しません。</small>
           <input
             ref={fileInputRef}
             type="file"
+            hidden={showCameraCapture}
+            className={showCameraCapture ? undefined : styles.desktopFileInput}
             aria-label="レシート画像"
             accept="image/*"
-            capture="environment"
             onChange={handleFileChange}
             disabled={isBusy}
           />
-        </label>
+          {showCameraCapture && (
+            <input
+              ref={cameraInputRef}
+              type="file"
+              hidden
+              aria-label="レシートをカメラで撮影"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChange}
+              disabled={isBusy}
+            />
+          )}
+        </ImageSelectionArea>
 
         <div className={styles.previewPanel}>
           {previewUrl ? (
@@ -496,7 +560,7 @@ export default function ReceiptUploadPage() {
           onClick={handleAnalyze}
           disabled={!hasSelection || isBusy}
         >
-          {isAnalyzing ? "解析中..." : "OCR解析へ進む"}
+          {isReadingCapture ? "撮影した画像を準備中…" : isAnalyzing ? "解析中..." : "OCR解析へ進む"}
         </button>
         <button
           type="button"
